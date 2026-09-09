@@ -7,8 +7,9 @@ from dataclasses import dataclass, field
 class BinanceAccountConfig:
     id: str
     label: str
-    apiKey: str
-    apiSecret: str
+    apiKey: str = ""
+    apiSecret: str = ""
+    credentialRef: str | None = None
     enabled: bool = True
     environment: str = "production"
 
@@ -17,9 +18,10 @@ class BinanceAccountConfig:
 class OkxAccountConfig:
     id: str
     label: str
-    apiKey: str
-    apiSecret: str
-    passphrase: str
+    apiKey: str = ""
+    apiSecret: str = ""
+    passphrase: str = ""
+    credentialRef: str | None = None
     enabled: bool = True
     environment: str = "production"
     domain: str = "https://www.okx.com"
@@ -44,6 +46,7 @@ class LongbridgeAccountConfig:
     appKey: str = ""
     appSecret: str = ""
     accessToken: str = ""
+    credentialRef: str | None = None
     enabled: bool = True
 
 
@@ -53,6 +56,7 @@ class IbkrAccountConfig:
     label: str
     token: str = ""
     queryId: str = ""
+    credentialRef: str | None = None
     baseUrl: str = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
     accountId: str | None = None
     version: int = 3
@@ -65,6 +69,7 @@ class IbkrAccountConfig:
 class OnchainIndexerConfig:
     provider: str = "covalent"
     apiKey: str = ""
+    credentialRef: str | None = None
     baseUrl: str = "https://api.covalenthq.com/v1"
 
 

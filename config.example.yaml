@@ -14,8 +14,7 @@ exchanges:
         label: Binance Main
         enabled: false
         environment: production
-        apiKey: "replace-with-read-only-key"
-        apiSecret: "replace-with-read-only-secret"
+        credentialRef: null
 
   okx:
     accounts:
@@ -24,9 +23,7 @@ exchanges:
         enabled: false
         environment: production
         domain: https://www.okx.com
-        apiKey: "replace-with-read-only-key"
-        apiSecret: "replace-with-read-only-secret"
-        passphrase: "replace-with-passphrase"
+        credentialRef: null
 
 brokers:
   moomoo:
@@ -45,16 +42,14 @@ brokers:
       - id: longbridge-main
         label: Longbridge Main
         enabled: false
-        appKey: "replace-with-app-key"
-        appSecret: "replace-with-app-secret"
-        accessToken: "replace-with-access-token"
+        credentialRef: null
 
   ibkr:
     accounts:
       - id: ibkr-main
         label: IBKR Main
         enabled: false
-        token: "replace-with-flex-web-service-token"
+        credentialRef: null
         queryId: "replace-with-flex-query-id"
         baseUrl: https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
         accountId: null

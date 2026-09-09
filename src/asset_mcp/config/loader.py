@@ -40,7 +40,13 @@ def default_config_path() -> Path:
     return default_user_config_path()
 
 
-def load_config(path: str | Path | None = None) -> AppConfig:
+def load_config(path: str | Path | None = None, credential_vault: Any | None = None) -> AppConfig:
+    """加载 YAML 配置并在内存中解析凭据引用。
+
+    输入：可选配置路径与可选 ``CredentialVault``；存在 ``credentialRef`` 时，
+    未显式传入保险库会自动选择 OS Keychain 或 Fernet 文件后端。
+    输出：完成类型校验的 ``AppConfig``；原 YAML 不被修改，缺失引用抛出 ``ConfigError``。
+    """
     config_path = Path(path) if path is not None else default_config_path()
     if not config_path.exists():
         raise ConfigError(
@@ -49,6 +55,12 @@ def load_config(path: str | Path | None = None) -> AppConfig:
 
     with config_path.open("r", encoding="utf-8") as fh:
         raw = yaml.safe_load(fh) or {}
+
+    if _contains_credential_ref(raw):
+        from asset_mcp.security import default_credential_vault, resolve_credential_refs
+
+        vault = credential_vault or default_credential_vault()
+        raw = resolve_credential_refs(raw, vault)
 
     return parse_config(raw)
 
@@ -74,6 +86,7 @@ def parse_config(raw: dict[str, Any]) -> AppConfig:
             environment=str(item.get("environment", "production")),
             apiKey=str(item.get("apiKey", "")),
             apiSecret=str(item.get("apiSecret", "")),
+            credentialRef=_optional_str(item.get("credentialRef")),
         )
         for item in _account_items(exchanges, "binance")
     ]
@@ -88,6 +101,7 @@ def parse_config(raw: dict[str, Any]) -> AppConfig:
             apiKey=str(item.get("apiKey", "")),
             apiSecret=str(item.get("apiSecret", "")),
             passphrase=str(item.get("passphrase", "")),
+            credentialRef=_optional_str(item.get("credentialRef")),
         )
         for item in _account_items(exchanges, "okx")
     ]
@@ -114,6 +128,7 @@ def parse_config(raw: dict[str, Any]) -> AppConfig:
             appKey=str(item.get("appKey", "")),
             appSecret=str(item.get("appSecret", "")),
             accessToken=str(item.get("accessToken", "")),
+            credentialRef=_optional_str(item.get("credentialRef")),
         )
         for item in _account_items(brokers, "longbridge")
     ]
@@ -125,6 +140,7 @@ def parse_config(raw: dict[str, Any]) -> AppConfig:
             enabled=bool(item.get("enabled", True)),
             token=str(item.get("token", "")),
             queryId=str(item.get("queryId", "")),
+            credentialRef=_optional_str(item.get("credentialRef")),
             baseUrl=str(
                 item.get(
                     "baseUrl",
@@ -146,6 +162,7 @@ def parse_config(raw: dict[str, Any]) -> AppConfig:
     onchain_indexer = OnchainIndexerConfig(
         provider=str(indexer.get("provider", "covalent")),
         apiKey=str(indexer.get("apiKey", "")),
+        credentialRef=_optional_str(indexer.get("credentialRef")),
         baseUrl=str(indexer.get("baseUrl", "https://api.covalenthq.com/v1")).rstrip("/"),
     )
 
@@ -255,3 +272,18 @@ def _optional_str(value: Any) -> str | None:
     if value is None or str(value).strip() == "":
         return None
     return str(value)
+
+
+def _contains_credential_ref(value: Any) -> bool:
+    """递归检查配置是否需要凭据保险库。
+
+    输入：任意 YAML 解析结果。
+    输出：发现至少一个非空 ``credentialRef`` 返回 ``True``，否则返回 ``False``。
+    """
+    if isinstance(value, dict):
+        if value.get("credentialRef"):
+            return True
+        return any(_contains_credential_ref(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_credential_ref(item) for item in value)
+    return False

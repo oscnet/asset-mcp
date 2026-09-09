@@ -6,8 +6,11 @@ from importlib import resources
 from pathlib import Path
 from typing import Sequence
 
+import yaml
+
 from asset_mcp import __version__
-from asset_mcp.config import default_user_config_path
+from asset_mcp.config import default_config_path, default_user_config_path
+from asset_mcp.security import default_credential_vault, migrate_inline_credentials
 from asset_mcp.server import main as server_main
 from asset_mcp.storage import PortfolioStore, default_database_path
 
@@ -75,6 +78,24 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     restore_parser.set_defaults(handler=_handle_restore)
 
+    migrate_parser = subparsers.add_parser(
+        "migrate-credentials",
+        help="copy inline secrets to the credential vault",
+    )
+    migrate_parser.add_argument(
+        "--path",
+        type=Path,
+        default=None,
+        help="legacy config path; defaults to the active config",
+    )
+    migrate_parser.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="new credential-reference config path",
+    )
+    migrate_parser.set_defaults(handler=_handle_migrate_credentials)
+
     parser.set_defaults(handler=_handle_serve)
     return parser
 
@@ -117,6 +138,29 @@ def _handle_restore(args: argparse.Namespace) -> int:
     store = PortfolioStore(default_database_path())
     store.restore_from(args.path)
     print(f"Restored database: {store.path}")
+    return 0
+
+
+def _handle_migrate_credentials(args: argparse.Namespace) -> int:
+    """把旧 YAML 明文凭据迁移到安全保险库。
+
+    输入：可选旧配置 ``path`` 和必须不存在的 ``output`` 路径；保险库自动优先
+    OS Keychain，无可用 Keychain 时使用主密码 Fernet 文件。
+    输出：原文件保持不变，新引用配置写入 0600 文件并返回 0；输出已存在时拒绝覆盖。
+    """
+    source_path = args.path or default_config_path()
+    output_path = args.output.expanduser()
+    if output_path.exists():
+        raise FileExistsError(output_path)
+    raw = yaml.safe_load(source_path.read_text(encoding="utf-8")) or {}
+    migrated, count = migrate_inline_credentials(raw, default_credential_vault())
+    output_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    output_path.write_text(
+        yaml.safe_dump(migrated, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    _chmod_if_supported(output_path, 0o600)
+    print(f"Migrated {count} account(s): {output_path}")
     return 0
 
 

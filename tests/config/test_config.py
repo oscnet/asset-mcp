@@ -7,6 +7,7 @@ from asset_mcp.config import (
     parse_config,
     redact_secrets,
 )
+from asset_mcp.security.credentials import CredentialVault
 
 
 def test_parse_config_supports_multiple_accounts():
@@ -181,3 +182,51 @@ def test_default_config_path_uses_user_config(monkeypatch, tmp_path):
 
     assert default_config_path() == user_config
     assert load_config().baseCurrency == "SGD"
+
+
+def test_load_config_resolves_credential_reference_at_runtime(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+exchanges:
+  binance:
+    accounts:
+      - id: binance-main
+        credentialRef: binance/main
+""",
+        encoding="utf-8",
+    )
+    vault = CredentialVault(
+        _ConfigMemoryBackend(
+            {"binance/main": {"apiKey": "runtime-key", "apiSecret": "runtime-secret"}}
+        )
+    )
+
+    config = load_config(config_path, credential_vault=vault)
+
+    assert config.binanceAccounts[0].credentialRef == "binance/main"
+    assert config.binanceAccounts[0].apiKey == "runtime-key"
+    assert config.binanceAccounts[0].apiSecret == "runtime-secret"
+    assert "runtime-key" not in config_path.read_text(encoding="utf-8")
+
+
+class _ConfigMemoryBackend:
+    def __init__(self, values):
+        self.values = values
+
+    def get(self, reference: str):
+        """读取配置测试凭据。
+
+        输入：稳定凭据引用。
+        输出：对应 secret bundle 的副本；不存在时返回 ``None``。
+        """
+        value = self.values.get(reference)
+        return dict(value) if value is not None else None
+
+    def set(self, reference: str, secrets: dict[str, str]):
+        """保存配置测试凭据。
+
+        输入：引用和 secret bundle。
+        输出：无返回值；更新内存映射。
+        """
+        self.values[reference] = dict(secrets)

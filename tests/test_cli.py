@@ -3,11 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 from asset_mcp import __version__
 from asset_mcp import cli
 from asset_mcp.domain.models import Asset
 from asset_mcp.storage import PortfolioStore
+from asset_mcp.security import CredentialVault
 
 
 def test_init_creates_default_config_under_home(tmp_path, monkeypatch, capsys):
@@ -18,7 +20,7 @@ def test_init_creates_default_config_under_home(tmp_path, monkeypatch, capsys):
     config_path = tmp_path / ".config" / "asset-mcp" / "config.local.yaml"
     assert exit_code == 0
     assert config_path.exists()
-    assert "replace-with-read-only-key" in config_path.read_text(encoding="utf-8")
+    assert "credentialRef: null" in config_path.read_text(encoding="utf-8")
     assert f"Created config: {config_path}" in capsys.readouterr().out
 
 
@@ -106,6 +108,47 @@ def test_backup_and_confirmed_restore_commands(tmp_path, monkeypatch, capsys):
     assert f"Restored database: {database_path}" in capsys.readouterr().out
 
 
+def test_migrate_credentials_writes_new_reference_config(tmp_path, monkeypatch, capsys):
+    source_path = tmp_path / "legacy.yaml"
+    output_path = tmp_path / "config.refs.yaml"
+    source_path.write_text(
+        """
+exchanges:
+  binance:
+    accounts:
+      - id: binance-main
+        apiKey: key
+        apiSecret: secret
+""",
+        encoding="utf-8",
+    )
+    backend = _CliMemoryBackend()
+    monkeypatch.setattr(
+        cli,
+        "default_credential_vault",
+        lambda: CredentialVault(backend),
+    )
+
+    result = cli.main(
+        [
+            "migrate-credentials",
+            "--path",
+            str(source_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    migrated = yaml.safe_load(output_path.read_text(encoding="utf-8"))
+    account = migrated["exchanges"]["binance"]["accounts"][0]
+    assert result == 0
+    assert account["credentialRef"] == "binance/binance-main"
+    assert "apiKey" not in account
+    assert source_path.read_text(encoding="utf-8").find("apiSecret: secret") > 0
+    assert backend.values["binance/binance-main"]["apiSecret"] == "secret"
+    assert "Migrated 1 account" in capsys.readouterr().out
+
+
 def _manual_asset(symbol: str, value_usd: int) -> Asset:
     """构造 CLI 备份测试使用的手工资产。
 
@@ -124,3 +167,25 @@ def _manual_asset(symbol: str, value_usd: int) -> Asset:
         valueUsd=value_usd,
         updatedAt="2026-09-09T00:00:00Z",
     )
+
+
+class _CliMemoryBackend:
+    def __init__(self):
+        self.values = {}
+
+    def get(self, reference: str):
+        """读取 CLI 测试凭据。
+
+        输入：稳定引用。
+        输出：对应 bundle 副本；不存在时返回 ``None``。
+        """
+        value = self.values.get(reference)
+        return dict(value) if value is not None else None
+
+    def set(self, reference: str, secrets: dict[str, str]):
+        """保存 CLI 测试凭据。
+
+        输入：稳定引用及 secret bundle。
+        输出：无返回值；写入内存字典供断言。
+        """
+        self.values[reference] = dict(secrets)

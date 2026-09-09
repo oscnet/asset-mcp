@@ -43,8 +43,8 @@ pip install asset-mcp
 # 2. Create the starter config (~/.config/asset-mcp/config.local.yaml)
 asset-mcp init
 
-# 3. Edit the config: fill in credentials for at least one account
-#    and set its `enabled: true`. See "Configure" below for per-provider examples.
+# 3. Set credentialRef for an account and set its `enabled: true`.
+#    Import existing inline secrets with `asset-mcp migrate-credentials`.
 vim ~/.config/asset-mcp/config.local.yaml
 
 # 4. Register the server with your MCP client
@@ -128,9 +128,19 @@ If you installed from PyPI, `asset-mcp init` writes the same template the
 repository ships as `config.example.yaml`. Refer to that file on GitHub (see
 **Links** below) for the complete set of supported fields and inline comments.
 
-Keep real API keys and personal balances only in your local config file —
-never commit it. Each account `id` must be unique and stable; this id appears
-in MCP responses and is used for filtering.
+Keep API keys in the OS Keychain, or in the encrypted file vault when no
+Keychain is available. YAML should contain only `credentialRef`. Each account
+`id` must be unique and stable; this id appears in MCP responses and is used
+for filtering.
+
+To migrate an existing inline-secret config without overwriting it:
+
+```bash
+asset-mcp migrate-credentials --path config.local.yaml --output config.refs.yaml
+```
+
+On systems without an OS Keychain, set `ASSET_MCP_MASTER_PASSWORD` first. The
+encrypted file defaults to `~/.local/share/asset-mcp/credentials.enc`.
 
 ### Binance
 
@@ -144,8 +154,7 @@ exchanges:
       - id: binance-main
         label: Binance Main
         enabled: true
-        apiKey: "replace-with-read-only-key"
-        apiSecret: "replace-with-read-only-secret"
+        credentialRef: binance/binance-main
         # environment: production    # optional
 ```
 
@@ -161,9 +170,7 @@ exchanges:
       - id: okx-main
         label: OKX Main
         enabled: true
-        apiKey: "replace-with-read-only-key"
-        apiSecret: "replace-with-read-only-secret"
-        passphrase: "replace-with-passphrase"
+        credentialRef: okx/okx-main
         # domain: https://www.okx.com   # optional
 ```
 
@@ -201,9 +208,7 @@ brokers:
       - id: longbridge-main
         label: Longbridge Main
         enabled: true
-        appKey: "replace-with-app-key"
-        appSecret: "replace-with-app-secret"
-        accessToken: "replace-with-access-token"
+        credentialRef: longbridge/longbridge-main
 ```
 
 ### IBKR
@@ -220,7 +225,7 @@ brokers:
       - id: ibkr-main
         label: IBKR Main
         enabled: true
-        token: "replace-with-flex-web-service-token"
+        credentialRef: ibkr/ibkr-main
         queryId: "replace-with-flex-query-id"
         baseUrl: https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
         accountId: U1234567
@@ -300,7 +305,7 @@ EVM token list, configure an optional indexer:
 onchain:
   indexer:
     provider: covalent
-    apiKey: "replace-with-covalent-api-key"
+    credentialRef: onchain/indexer
 ```
 
 ### Manual assets & rates
@@ -429,7 +434,8 @@ anything else points at a misconfiguration or unreachable provider.
 ## Security Notes
 
 - Use read-only API keys for exchanges.
-- Do not commit `config.local.yaml`.
+- Store secrets in the OS Keychain or encrypted Fernet vault; YAML contains references only.
+- Do not commit `config.local.yaml`, encrypted vaults, or Portfolio database backups.
 - Do not enable withdrawal, transfer, or trading permissions on API keys.
 - Use Longbridge API key credentials with read-only permissions where
   possible.
