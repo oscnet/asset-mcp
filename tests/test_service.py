@@ -213,6 +213,22 @@ async def test_get_allocation_uses_normalized_assets_and_filters(monkeypatch):
     ]
 
 
+@pytest.mark.asyncio
+async def test_get_risk_combines_asset_and_position_results(monkeypatch):
+    monkeypatch.setattr(
+        service_module,
+        "build_provider_entries",
+        lambda config, source=None: [("binance", _AssetAndPositionProvider())],
+    )
+
+    result = await AssetService(AppConfig()).get_risk()
+
+    assert result["ok"] is True
+    assert result["totalValueUsd"] == 10000
+    assert result["custody"]["cexPercent"] == 100
+    assert result["futures"]["grossNotionalUsd"] == 6200
+
+
 class _FastProvider:
     async def fetch_assets(self) -> list[Asset]:
         return [
@@ -344,3 +360,26 @@ class _FailingPositionProvider:
         输出：不返回仓位，固定抛出 ``RuntimeError`` 供缓存回退测试使用。
         """
         raise RuntimeError("position provider unavailable")
+
+
+class _AssetAndPositionProvider(_PositionProvider):
+    async def fetch_assets(self) -> list[Asset]:
+        """返回风险集成测试资产。
+
+        输入：无。
+        输出：价值 10000 美元的 Binance BTC 资产。
+        """
+        return [
+            Asset(
+                source="binance",
+                accountId="binance-main",
+                accountLabel="Binance",
+                category="crypto",
+                symbol="BTC",
+                quantity=1,
+                currency="BTC",
+                unitPriceUsd=10000,
+                valueUsd=10000,
+                updatedAt="2026-09-09T00:00:00Z",
+            )
+        ]

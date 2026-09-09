@@ -58,3 +58,24 @@ async def test_get_allocation_mcp_tool_delegates_filters(monkeypatch):
             },
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_get_risk_mcp_tool_delegates_to_service(monkeypatch):
+    calls = []
+
+    async def fake_call_service(method_name: str, **kwargs):
+        """记录 risk MCP 委派。
+
+        输入：Service 方法名和参数。
+        输出：最小风险响应并记录调用。
+        """
+        calls.append((method_name, kwargs))
+        return {"totalValueUsd": 0, "warnings": []}
+
+    monkeypatch.setattr(server_module, "_call_service", fake_call_service)
+
+    result = await server_module.get_risk()
+
+    assert result["warnings"] == []
+    assert calls == [("get_risk", {})]

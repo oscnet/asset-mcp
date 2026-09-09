@@ -82,6 +82,16 @@ async def get_allocation(
 
 
 @mcp.tool()
+async def get_risk() -> dict[str, Any]:
+    """返回当前资产与合约仓位的确定性风险指标。
+
+    输入：无，读取全部已启用来源。
+    输出：集中度、稳定币、CEX/自托管、合约敞口、规则警告及同步状态；严格只读。
+    """
+    return await _call_service("get_risk")
+
+
+@mcp.tool()
 async def health_check_sources() -> dict[str, Any]:
     """Check configured sources and accounts without returning secrets."""
     return await _call_service("health_check_sources")

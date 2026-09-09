@@ -16,6 +16,7 @@ from asset_mcp.domain.aggregation import (
 )
 from asset_mcp.config import AppConfig, load_config
 from asset_mcp.domain.models import AccountStatus, Asset, Position
+from asset_mcp.domain.risk import build_risk
 from asset_mcp.providers.base import AssetProvider
 from asset_mcp.providers.registry import PROVIDER_FACTORIES, build_provider_entries
 from asset_mcp.storage import PortfolioStore, default_database_path
@@ -145,6 +146,22 @@ class AssetService:
         result = await self._fetch_assets_result(source=source)
         assets = filter_assets(result.assets, source, accountId, category)
         return _with_fetch_status(build_allocation(assets, groupBy), result)
+
+    async def get_risk(self) -> dict[str, Any]:
+        """计算当前组合与合约仓位的核心风险指标。
+
+        输入：Service 配置的全部资产 Provider、支持仓位的交易所 Provider 及可选缓存。
+        输出：确定性集中度、托管比例、稳定币和合约敞口指标，以及资产/仓位读取产生的
+        ``partial`` 与脱敏错误；该方法不调用 AI，也不执行任何交易。
+        """
+        asset_result = await self._fetch_assets_result()
+        position_result = await self._fetch_positions_result()
+        payload = build_risk(asset_result.assets, position_result.positions)
+        errors = [*asset_result.provider_errors, *position_result.provider_errors]
+        payload["ok"] = not errors
+        payload["partial"] = bool(errors)
+        payload["providerErrors"] = [error.to_dict() for error in errors]
+        return payload
 
     async def get_futures_positions(self, source: str | None = None) -> dict[str, Any]:
         """读取并标准化当前交易所合约仓位。
