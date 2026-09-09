@@ -114,6 +114,64 @@ def test_okx_provider_keeps_trading_and_funding_balances_separate():
     assert by_symbol_wallet[("ETH", "funding")].valueUsd == 3000
 
 
+@pytest.mark.asyncio
+async def test_okx_fetch_positions_normalizes_swap_and_futures_rows():
+    config = _okx_config()
+    client = _FakeOkxClient(
+        {
+            "/api/v5/account/positions": {
+                "code": "0",
+                "data": [
+                    {
+                        "instId": "BTC-USDT-SWAP",
+                        "instType": "SWAP",
+                        "pos": "0.5",
+                        "posSide": "long",
+                        "avgPx": "60000",
+                        "markPx": "62000",
+                        "notionalUsd": "31000",
+                        "upl": "1000",
+                        "lever": "3",
+                        "liqPx": "45000",
+                        "margin": "10000",
+                    },
+                    {
+                        "instId": "ETH-USDT-260327",
+                        "instType": "FUTURES",
+                        "pos": "-2",
+                        "posSide": "net",
+                        "avgPx": "3000",
+                        "markPx": "2800",
+                        "notionalUsd": "-5600",
+                        "upl": "400",
+                        "lever": "2",
+                        "liqPx": "",
+                    },
+                    {"instId": "SOL-USDT-SWAP", "instType": "SWAP", "pos": "0"},
+                ],
+            }
+        }
+    )
+
+    positions = await OkxProvider(config, client=client).fetch_positions()
+
+    assert len(positions) == 2
+    assert positions[0].symbol == "BTC"
+    assert positions[0].side == "long"
+    assert positions[0].quantity == Decimal("0.5")
+    assert positions[0].notionalUsd == Decimal("31000")
+    assert positions[0].marginUsd == Decimal("10000")
+    assert positions[0].accountType == "okx_perpetual"
+    assert positions[1].symbol == "ETH"
+    assert positions[1].side == "short"
+    assert positions[1].quantity == Decimal("2")
+    assert positions[1].notionalUsd == Decimal("5600")
+    assert positions[1].liquidationPriceUsd is None
+    assert positions[1].marginUsd == Decimal("2800")
+    assert positions[1].accountType == "okx_futures"
+    assert client.calls == ["/api/v5/account/positions"]
+
+
 def test_moomoo_provider_uses_cash_by_real_currency_before_summary_currency():
     config = parse_config(
         {
@@ -503,6 +561,26 @@ def _binance_config():
     )
 
 
+def _okx_config():
+    return parse_config(
+        {
+            "exchanges": {
+                "okx": {
+                    "accounts": [
+                        {
+                            "id": "okx-main",
+                            "label": "OKX",
+                            "apiKey": "key",
+                            "apiSecret": "secret",
+                            "passphrase": "pass",
+                        }
+                    ]
+                }
+            }
+        }
+    )
+
+
 class _FakeResponse:
     def __init__(self, status_code, data):
         self.status_code = status_code
@@ -538,6 +616,19 @@ class _FakeBinanceClient:
         if key not in self.routes:
             return _FakeResponse(404, {"code": -1, "msg": "not configured"})
         return _FakeResponse(200, self.routes[key])
+
+
+class _FakeOkxClient:
+    def __init__(self, routes):
+        self.routes = routes
+        self.calls = []
+
+    async def get(self, url, **_kwargs):
+        path = urlparse(url).path
+        self.calls.append(path)
+        if path not in self.routes:
+            return _FakeResponse(404, {"code": "51001", "msg": "not configured"})
+        return _FakeResponse(200, self.routes[path])
 
 
 class _FakeFlexClient:
