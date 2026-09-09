@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from asset_mcp.web.view_model import build_home_view_model
+from asset_mcp.web.view_model import build_drilldown_view, build_home_view_model
 
 
 def test_home_view_model_builds_eight_metrics_and_chart_data():
@@ -57,3 +57,53 @@ def test_home_view_model_marks_partial_or_stale_data():
     assert metrics["sync_status"]["value"] == "STALE"
     assert metrics["change_24h"]["value"] == "—"
     assert model["warnings"][0]["code"] == "stale_data"
+
+
+def test_drilldown_view_builds_cascading_options_and_filtered_rows():
+    assets = [
+        _asset("BTC", "binance", "main", "spot", "binance", 60000),
+        _asset("BTC", "onchain", "ledger", "wallet", "self_custody", 30000),
+        _asset("ETH", "okx", "trading", "spot", "okx", 10000),
+    ]
+
+    view = build_drilldown_view(assets, {"symbol": "BTC", "source": "onchain"})
+
+    assert view["options"]["symbol"] == ["BTC", "ETH"]
+    assert view["options"]["source"] == ["binance", "onchain"]
+    assert view["options"]["accountId"] == ["ledger"]
+    assert view["totalValueUsd"] == 30000
+    assert view["rows"] == [
+        {
+            "币种": "BTC",
+            "平台": "onchain",
+            "账户": "ledger",
+            "类型": "wallet",
+            "位置": "self_custody",
+            "数量": 1,
+            "价值 (USD)": 30000,
+            "状态": "FRESH",
+        }
+    ]
+
+
+def test_drilldown_view_uses_unassigned_for_missing_dimensions():
+    asset = _asset("USD", "manual", "cash", None, None, 50)
+
+    view = build_drilldown_view([asset], {})
+
+    assert view["options"]["accountType"] == ["unassigned"]
+    assert view["options"]["location"] == ["unassigned"]
+
+
+def _asset(symbol, source, account_id, account_type, location, value_usd):
+    """输入下钻维度与美元价值；输出标准化资产字典测试夹具。"""
+    return {
+        "symbol": symbol,
+        "source": source,
+        "accountId": account_id,
+        "accountType": account_type,
+        "location": location,
+        "quantity": 1,
+        "valueUsd": value_usd,
+        "syncStatus": "FRESH",
+    }

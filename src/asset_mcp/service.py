@@ -164,6 +164,32 @@ class AssetService:
         payload["providerErrors"] = [error.to_dict() for error in errors]
         return payload
 
+    async def get_portfolio_overview(self) -> dict[str, Any]:
+        """一次读取首页所需的实时资产与合约数据。
+
+        输入：Service 当前配置的全部只读 Provider 和可选 SQLite 缓存。
+        输出：Dashboard、风险、标准化资产明细及统一同步状态；每类实时数据仅读取一次，
+        避免 Web 首页为指标、风险和下钻重复请求交易所或链上接口。
+        """
+        asset_result, position_result = await asyncio.gather(
+            self._fetch_assets_result(),
+            self._fetch_positions_result(),
+        )
+        dashboard = _with_fetch_status(build_dashboard_data(asset_result.assets), asset_result)
+        risk = build_risk(asset_result.assets, position_result.positions)
+        errors = [*asset_result.provider_errors, *position_result.provider_errors]
+        risk["ok"] = not errors
+        risk["partial"] = bool(errors)
+        risk["providerErrors"] = [error.to_dict() for error in errors]
+        return {
+            "dashboard": dashboard,
+            "risk": risk,
+            "assets": [asset.to_dict() for asset in asset_result.assets],
+            "ok": not errors,
+            "partial": bool(errors),
+            "providerErrors": [error.to_dict() for error in errors],
+        }
+
     async def run_scenario(self, shocks: dict[str, Any]) -> dict[str, Any]:
         """对当前资产和线性合约运行价格冲击测试。
 

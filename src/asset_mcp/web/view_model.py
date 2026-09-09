@@ -7,11 +7,13 @@ def build_home_view_model(
     dashboard: dict[str, Any],
     risk: dict[str, Any],
     history: dict[str, Any],
+    assets: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """构造 Streamlit 首页使用的稳定展示模型。
 
-    输入：现有 Dashboard、风险和历史服务响应；允许部分字段缺失。
-    输出：八项已格式化指标、资产/位置分布、净值序列、Top Assets 和警告；
+    输入：现有 Dashboard、风险和历史服务响应，以及可选标准化资产明细；
+    允许部分字段缺失，资产明细用于构造五级下钻的初始状态。
+    输出：八项已格式化指标、资产/位置分布、净值序列、Top Assets、下钻和警告；
     该函数只负责展示转换，不重新计算领域层风险指标。
     """
     total = float(dashboard.get("totalValueUsd") or 0)
@@ -68,7 +70,70 @@ def build_home_view_model(
         "history": points,
         "warnings": warnings,
         "isStale": is_stale,
+        "drilldown": build_drilldown_view(assets or [], {}),
     }
+
+
+DRILLDOWN_DIMENSIONS = ("symbol", "source", "accountId", "accountType", "location")
+DRILLDOWN_COLUMNS = {
+    "symbol": "币种",
+    "source": "平台",
+    "accountId": "账户",
+    "accountType": "类型",
+    "location": "位置",
+}
+
+
+def build_drilldown_view(
+    assets: list[dict[str, Any]],
+    selections: dict[str, str],
+) -> dict[str, Any]:
+    """构造从币种到资产位置的级联下钻数据。
+
+    输入：标准化资产字典列表，以及 ``symbol/source/accountId/accountType/location``
+    中任意已选条件；空维度统一显示为 ``unassigned``。
+    输出：每一级基于前序选择生成的可选值、最终过滤后的中文展示行和美元合计；
+    不修改输入资产，也不重新估值。
+    """
+    filtered = list(assets)
+    options: dict[str, list[str]] = {}
+    for dimension in DRILLDOWN_DIMENSIONS:
+        options[dimension] = sorted({_dimension_value(asset, dimension) for asset in filtered})
+        selected = selections.get(dimension)
+        if selected:
+            filtered = [
+                asset for asset in filtered if _dimension_value(asset, dimension) == selected
+            ]
+
+    rows = [
+        {
+            "币种": _dimension_value(asset, "symbol"),
+            "平台": _dimension_value(asset, "source"),
+            "账户": _dimension_value(asset, "accountId"),
+            "类型": _dimension_value(asset, "accountType"),
+            "位置": _dimension_value(asset, "location"),
+            "数量": asset.get("quantity", 0),
+            "价值 (USD)": asset.get("valueUsd", 0),
+            "状态": asset.get("syncStatus") or "UNKNOWN",
+        }
+        for asset in sorted(
+            filtered,
+            key=lambda item: float(item.get("valueUsd") or 0),
+            reverse=True,
+        )
+    ]
+    return {
+        "assets": list(assets),
+        "options": options,
+        "rows": rows,
+        "totalValueUsd": sum(float(asset.get("valueUsd") or 0) for asset in filtered),
+    }
+
+
+def _dimension_value(asset: dict[str, Any], dimension: str) -> str:
+    """输入资产字典和下钻维度；输出去空白后的稳定显示值或 ``unassigned``。"""
+    value = asset.get(dimension)
+    return str(value).strip() if value is not None and str(value).strip() else "unassigned"
 
 
 def _history_change(points: list[dict[str, Any]]) -> tuple[float | None, float | None]:

@@ -230,6 +230,25 @@ async def test_get_risk_combines_asset_and_position_results(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_portfolio_overview_fetches_each_live_dataset_once(monkeypatch):
+    provider = _CountingAssetAndPositionProvider()
+    monkeypatch.setattr(
+        service_module,
+        "build_provider_entries",
+        lambda config, source=None: [("binance", provider)],
+    )
+
+    result = await AssetService(AppConfig()).get_portfolio_overview()
+
+    assert provider.asset_fetches == 1
+    assert provider.position_fetches == 1
+    assert result["dashboard"]["totalValueUsd"] == 10000
+    assert result["risk"]["futures"]["grossNotionalUsd"] == 6200
+    assert result["assets"][0]["symbol"] == "BTC"
+    assert result["partial"] is False
+
+
+@pytest.mark.asyncio
 async def test_run_scenario_combines_live_assets_and_positions(monkeypatch):
     monkeypatch.setattr(
         service_module,
@@ -425,3 +444,19 @@ class _AssetAndPositionProvider(_PositionProvider):
                 updatedAt="2026-09-09T00:00:00Z",
             )
         ]
+
+
+class _CountingAssetAndPositionProvider(_AssetAndPositionProvider):
+    def __init__(self):
+        self.asset_fetches = 0
+        self.position_fetches = 0
+
+    async def fetch_assets(self) -> list[Asset]:
+        """输入无；输出测试资产，并记录实时资产读取次数。"""
+        self.asset_fetches += 1
+        return await super().fetch_assets()
+
+    async def fetch_positions(self) -> list[Position]:
+        """输入无；输出测试仓位，并记录实时仓位读取次数。"""
+        self.position_fetches += 1
+        return await super().fetch_positions()

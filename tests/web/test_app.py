@@ -15,7 +15,8 @@ async def test_load_home_model_uses_existing_read_only_services():
     model = await load_home_model(service)
 
     assert len(model["metrics"]) == 8
-    assert service.calls == ["dashboard", "risk", "history"]
+    assert service.calls == ["overview", "history"]
+    assert model["drilldown"]["rows"][0]["币种"] == "USD"
 
 
 def test_main_renders_complete_dashboard_with_streamlit_contract(monkeypatch):
@@ -34,6 +35,12 @@ def test_main_renders_complete_dashboard_with_streamlit_contract(monkeypatch):
             "locationAllocation": [{"label": "binance", "valueUsd": 1}],
             "topAssets": [{"symbol": "BTC", "valueUsd": 1}],
             "warnings": [{"code": "test", "message": "review"}],
+            "drilldown": {
+                "assets": [],
+                "options": {},
+                "rows": [],
+                "totalValueUsd": 0,
+            },
         }
 
     monkeypatch.setattr(app_module, "load_home_model", fake_load_home_model)
@@ -44,6 +51,7 @@ def test_main_renders_complete_dashboard_with_streamlit_contract(monkeypatch):
     assert streamlit.line_chart_calls == 1
     assert streamlit.bar_chart_calls == 1
     assert streamlit.dataframe_calls == 2
+    assert streamlit.dataframe_widths == ["stretch", "stretch"]
     assert streamlit.warnings == ["test: review"]
 
 
@@ -51,15 +59,25 @@ class _FakeService:
     def __init__(self):
         self.calls = []
 
-    async def get_asset_dashboard_data(self):
-        """输入无；输出最小 Dashboard 服务响应并记录调用。"""
-        self.calls.append("dashboard")
-        return {"totalValueUsd": 100, "partial": False}
-
-    async def get_risk(self):
-        """输入无；输出最小风险服务响应并记录调用。"""
-        self.calls.append("risk")
-        return {"stablecoin": {}, "custody": {}, "futures": {}, "warnings": []}
+    async def get_portfolio_overview(self):
+        """输入无；输出首页聚合数据并记录单次读取调用。"""
+        self.calls.append("overview")
+        return {
+            "dashboard": {"totalValueUsd": 100, "partial": False},
+            "risk": {"stablecoin": {}, "custody": {}, "futures": {}, "warnings": []},
+            "assets": [
+                {
+                    "symbol": "USD",
+                    "source": "manual",
+                    "accountId": "manual-main",
+                    "accountType": "manual",
+                    "location": "manual",
+                    "quantity": 100,
+                    "valueUsd": 100,
+                    "syncStatus": "FRESH",
+                }
+            ],
+        }
 
     async def get_history(self, days: int):
         """输入历史窗口；输出最小历史服务响应并记录调用。"""
@@ -74,6 +92,7 @@ class _FakeStreamlit:
         self.line_chart_calls = 0
         self.bar_chart_calls = 0
         self.dataframe_calls = 0
+        self.dataframe_widths = []
         self.warnings = []
 
     def set_page_config(self, **kwargs):
@@ -96,9 +115,10 @@ class _FakeStreamlit:
         """输入分配数据；输出无并累计柱状图调用。"""
         self.bar_chart_calls += 1
 
-    def dataframe(self, *_args, **_kwargs):
-        """输入表格数据；输出无并累计表格调用。"""
+    def dataframe(self, *_args, **kwargs):
+        """输入表格数据与显示选项；输出无并记录调用次数和宽度。"""
         self.dataframe_calls += 1
+        self.dataframe_widths.append(kwargs.get("width"))
 
     def warning(self, message):
         """输入警告文本；输出无并保存文本。"""

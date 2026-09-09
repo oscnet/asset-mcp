@@ -5,7 +5,11 @@ from html import escape
 from typing import Any
 
 from asset_mcp.service import AssetService
-from asset_mcp.web.view_model import build_home_view_model
+from asset_mcp.web.view_model import (
+    DRILLDOWN_COLUMNS,
+    build_drilldown_view,
+    build_home_view_model,
+)
 
 
 async def load_home_model(service: AssetService | None = None) -> dict[str, Any]:
@@ -15,12 +19,16 @@ async def load_home_model(service: AssetService | None = None) -> dict[str, Any]
     输出：由 Dashboard、风险和 30 天历史响应组合成的首页 ViewModel。
     """
     active_service = service or AssetService()
-    dashboard, risk, history = await asyncio.gather(
-        active_service.get_asset_dashboard_data(),
-        active_service.get_risk(),
+    overview, history = await asyncio.gather(
+        active_service.get_portfolio_overview(),
         active_service.get_history(days=30),
     )
-    return build_home_view_model(dashboard, risk, history)
+    return build_home_view_model(
+        overview["dashboard"],
+        overview["risk"],
+        history,
+        assets=overview["assets"],
+    )
 
 
 def main() -> None:
@@ -76,14 +84,43 @@ def main() -> None:
     lower_left, lower_right = st.columns(2, gap="large")
     with lower_left:
         st.markdown("### Location exposure")
-        st.dataframe(model["locationAllocation"], use_container_width=True, hide_index=True)
+        st.dataframe(model["locationAllocation"], width="stretch", hide_index=True)
     with lower_right:
         st.markdown("### Largest positions")
-        st.dataframe(model["topAssets"], use_container_width=True, hide_index=True)
+        st.dataframe(model["topAssets"], width="stretch", hide_index=True)
+    _render_drilldown(st, model["drilldown"])
     if model["warnings"]:
         st.markdown("### Risk signals")
         for warning in model["warnings"]:
             st.warning(f"{warning.get('code', 'risk')}: {warning.get('message', '')}")
+
+
+def _render_drilldown(st: Any, initial_view: dict[str, Any]) -> None:
+    """渲染五级资产下钻筛选器和明细表。
+
+    输入：Streamlit 模块与含原始资产的初始下钻 ViewModel。
+    输出：无返回值；按币种、平台、账户、类型、位置级联筛选并显示价值合计。
+    """
+    st.markdown("### Portfolio drilldown")
+    assets = initial_view["assets"]
+    if not assets:
+        st.info("No asset details available.")
+        return
+    selections: dict[str, str] = {}
+    columns = st.columns(5, gap="small")
+    for column, (dimension, label) in zip(columns, DRILLDOWN_COLUMNS.items()):
+        view = build_drilldown_view(assets, selections)
+        with column:
+            selected = st.selectbox(
+                label,
+                ["全部", *view["options"][dimension]],
+                key=f"drilldown_{dimension}",
+            )
+        if selected != "全部":
+            selections[dimension] = selected
+    view = build_drilldown_view(assets, selections)
+    st.caption(f"{len(view['rows'])} assets · ${view['totalValueUsd']:,.2f}")
+    st.dataframe(view["rows"], width="stretch", hide_index=True)
 
 
 def _render_metrics(st: Any, metrics: list[dict[str, str]]) -> None:

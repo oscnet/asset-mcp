@@ -127,7 +127,8 @@ uv run asset-mcp-web
 
 Streamlit listens locally by default. The dashboard is read-only and reuses
 the same config, credential vault, SQLite snapshots, and deterministic risk
-services as the MCP server.
+services as the MCP server. Its portfolio drilldown filters asset details in
+order by symbol, platform, account, account type, and location.
 
 ## Configure
 
