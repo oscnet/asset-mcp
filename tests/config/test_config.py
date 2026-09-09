@@ -110,6 +110,22 @@ def test_parse_config_supports_multiple_accounts():
     assert config.manualAccounts[0].assets[0].quantity == 100
 
 
+def test_parse_config_normalizes_asset_account_and_wallet_tags():
+    config = parse_config(
+        {
+            "tags": {
+                "assets": {"BTC": [" Core ", "Core", "Long Term"]},
+                "accounts": {"binance-main": ["Personal"]},
+                "wallets": {"onchain-main/Ledger": ["Cold Storage"]},
+            }
+        }
+    )
+
+    assert config.assetTags == {"BTC": ("Core", "Long Term")}
+    assert config.accountTags == {"binance-main": ("Personal",)}
+    assert config.walletTags == {"onchain-main/Ledger": ("Cold Storage",)}
+
+
 def test_duplicate_account_ids_are_rejected():
     with pytest.raises(ConfigError, match="Duplicate account id"):
         parse_config(

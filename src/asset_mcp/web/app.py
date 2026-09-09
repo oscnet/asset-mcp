@@ -4,7 +4,13 @@ import asyncio
 from html import escape
 from typing import Any
 
+from asset_mcp.config import ConfigError, default_config_path
 from asset_mcp.service import AssetService
+from asset_mcp.web.config_editor import (
+    build_editable_sections,
+    load_editable_config,
+    save_editable_sections,
+)
 from asset_mcp.web.view_model import (
     DRILLDOWN_COLUMNS,
     build_drilldown_view,
@@ -32,10 +38,11 @@ async def load_home_model(service: AssetService | None = None) -> dict[str, Any]
 
 
 def main() -> None:
-    """启动并渲染 Asset MCP Streamlit 首页。
+    """启动并渲染 Asset MCP Streamlit Web 应用。
 
     输入：当前本地配置、Keychain/Fernet 凭据和 SQLite 快照，无命令行参数。
-    输出：浏览器中的只读 Portfolio Dashboard；加载失败时显示可操作错误而不泄露凭据。
+    输出：浏览器中的只读 Portfolio Dashboard 与安全配置编辑页；加载失败时显示可操作
+    错误而不泄露凭据。
     """
     import streamlit as st
 
@@ -43,9 +50,14 @@ def main() -> None:
         page_title="Asset MCP · Portfolio Observatory",
         page_icon="◈",
         layout="wide",
-        initial_sidebar_state="collapsed",
+        initial_sidebar_state="expanded",
     )
     st.markdown(_STYLES, unsafe_allow_html=True)
+    page = st.sidebar.radio(
+        "Workspace",
+        ["资产总览", "配置中心"],
+        help="配置页只处理非敏感 YAML；API 密钥仍保存在凭据保险库。",
+    )
     st.markdown(
         """
         <header class="masthead">
@@ -56,6 +68,9 @@ def main() -> None:
         """,
         unsafe_allow_html=True,
     )
+    if page == "配置中心":
+        _render_configuration(st)
+        return
     try:
         model = asyncio.run(load_home_model())
     except Exception as exc:  # noqa: BLE001
@@ -93,6 +108,74 @@ def main() -> None:
         st.markdown("### Risk signals")
         for warning in model["warnings"]:
             st.warning(f"{warning.get('code', 'risk')}: {warning.get('message', '')}")
+
+
+def _render_configuration(st: Any) -> None:
+    """渲染不接触凭据保险库的 YAML 配置中心。
+
+    输入：Streamlit 模块，以及 ``ASSET_MCP_CONFIG`` 解析出的当前本地配置路径。
+    输出：账户、钱包、手工资产和标签四个受控编辑区；提交时原子保存，错误时保留原文件。
+    """
+    path = default_config_path()
+    st.markdown("### Configuration studio")
+    st.caption(str(path))
+    st.info(
+        "这里只保存非敏感配置。API Key、Secret、Passphrase 和 Token 必须通过 "
+        "credentialRef 引用 Keychain/Fernet 保险库。"
+    )
+    try:
+        document = load_editable_config(path)
+        sections = build_editable_sections(document)
+    except ConfigError as exc:
+        st.error(str(exc))
+        return
+
+    with st.form("configuration_editor"):
+        account_tab, wallet_tab, manual_tab, tag_tab = st.tabs(
+            ["账户", "钱包", "手工资产", "标签"]
+        )
+        with account_tab:
+            accounts = st.text_area(
+                "账户 YAML",
+                sections["accounts"],
+                height=360,
+                help="支持 exchanges 与 brokers；凭据仅填写 credentialRef。",
+            )
+        with wallet_tab:
+            wallets = st.text_area(
+                "钱包 YAML",
+                sections["wallets"],
+                height=360,
+                help="只填写公开地址，禁止私钥和助记词。",
+            )
+        with manual_tab:
+            manual = st.text_area("手工资产 YAML", sections["manual"], height=360)
+        with tag_tab:
+            tags = st.text_area(
+                "标签 YAML",
+                sections["tags"],
+                height=360,
+                help="支持 assets、accounts、wallets；钱包目标格式为 accountId/wallet。",
+            )
+        submitted = st.form_submit_button("验证并保存", type="primary")
+
+    if not submitted:
+        return
+    try:
+        save_editable_sections(
+            path,
+            document,
+            {
+                "accounts": accounts,
+                "wallets": wallets,
+                "manual": manual,
+                "tags": tags,
+            },
+        )
+    except ConfigError as exc:
+        st.error(f"配置未保存：{exc}")
+        return
+    st.success("配置已安全保存，刷新资产总览后生效。")
 
 
 def _render_drilldown(st: Any, initial_view: dict[str, Any]) -> None:

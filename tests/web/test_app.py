@@ -48,6 +48,7 @@ def test_main_renders_complete_dashboard_with_streamlit_contract(monkeypatch):
     app_module.main()
 
     assert streamlit.page_config["page_title"].startswith("Asset MCP")
+    assert streamlit.sidebar.selection == "资产总览"
     assert streamlit.line_chart_calls == 1
     assert streamlit.bar_chart_calls == 1
     assert streamlit.dataframe_calls == 2
@@ -94,6 +95,7 @@ class _FakeStreamlit:
         self.dataframe_calls = 0
         self.dataframe_widths = []
         self.warnings = []
+        self.sidebar = _FakeSidebar()
 
     def set_page_config(self, **kwargs):
         """输入页面配置；输出无并保存配置。"""
@@ -146,3 +148,13 @@ class _FakeColumn:
     def markdown(self, *args, **kwargs):
         """输入 Markdown；输出无并委派根对象。"""
         self.root.markdown(*args, **kwargs)
+
+
+class _FakeSidebar:
+    def __init__(self):
+        self.selection = None
+
+    def radio(self, _label, options, **_kwargs):
+        """输入导航标签和选项；输出首项并记录当前选择。"""
+        self.selection = options[0]
+        return self.selection

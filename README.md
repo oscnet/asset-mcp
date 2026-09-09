@@ -130,6 +130,11 @@ the same config, credential vault, SQLite snapshots, and deterministic risk
 services as the MCP server. Its portfolio drilldown filters asset details in
 order by symbol, platform, account, account type, and location.
 
+Use **配置中心** in the sidebar to edit account metadata, public wallet
+addresses, manual assets, and tags. The editor refuses inline secrets and
+only accepts `credentialRef`; it validates the complete configuration before
+atomically replacing the local YAML file.
+
 ## Configure
 
 `asset-mcp init` writes the starter template to
@@ -349,6 +354,14 @@ manual:
         - symbol: USD
           quantity: 500000
           currency: USD
+
+tags:
+  assets:
+    BTC: [Core, Long Term]
+  accounts:
+    alipay: [Personal]
+  wallets:
+    onchain-main/Ledger ETH: [Cold Storage]
 ```
 
 ## Run the MCP Server

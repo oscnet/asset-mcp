@@ -22,6 +22,7 @@ from asset_mcp.config.models import (
     OnchainTokenConfig,
 )
 from asset_mcp.config.validation import validate_unique_account_ids
+from asset_mcp.domain.models import normalize_tags
 
 
 def default_user_config_path() -> Path:
@@ -77,6 +78,7 @@ def parse_config(raw: dict[str, Any]) -> AppConfig:
     brokers = raw.get("brokers") or {}
     onchain = raw.get("onchain") or {}
     manual = raw.get("manual") or {}
+    tags = raw.get("tags") or {}
 
     binance_accounts = [
         BinanceAccountConfig(
@@ -239,6 +241,9 @@ def parse_config(raw: dict[str, Any]) -> AppConfig:
         onchainIndexer=onchain_indexer,
         onchainAccounts=onchain_accounts,
         manualAccounts=manual_accounts,
+        assetTags=_tag_map(tags.get("assets"), uppercase_keys=True),
+        accountTags=_tag_map(tags.get("accounts")),
+        walletTags=_tag_map(tags.get("wallets")),
     )
     validate_unique_account_ids(config)
     return config
@@ -287,3 +292,27 @@ def _contains_credential_ref(value: Any) -> bool:
     if isinstance(value, list):
         return any(_contains_credential_ref(item) for item in value)
     return False
+
+
+def _tag_map(value: Any, uppercase_keys: bool = False) -> dict[str, tuple[str, ...]]:
+    """解析配置中的标签映射。
+
+    输入：目标到标签列表的 YAML 映射，以及是否把目标统一为大写。
+    输出：移除空目标、空标签和重复标签后的不可变元组映射；非映射输入抛出
+    ``ConfigError``，防止静默忽略错误配置。
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ConfigError("Tag groups must be mappings.")
+    result: dict[str, tuple[str, ...]] = {}
+    for raw_key, raw_tags in value.items():
+        key = str(raw_key).strip()
+        if not key:
+            continue
+        if not isinstance(raw_tags, (list, tuple)):
+            raise ConfigError(f"Tags for '{key}' must be a list.")
+        normalized = normalize_tags(raw_tags)
+        if normalized:
+            result[key.upper() if uppercase_keys else key] = normalized
+    return result

@@ -249,6 +249,26 @@ async def test_get_portfolio_overview_fetches_each_live_dataset_once(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_configured_tags_are_applied_without_polluting_provider_cache(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        service_module,
+        "build_provider_entries",
+        lambda config, source=None: [("binance", _AssetAndPositionProvider())],
+    )
+    config = AppConfig(
+        assetTags={"BTC": ("Core",)},
+        accountTags={"binance-main": ("Personal",)},
+        walletTags={"binance-main/spot": ("Trading",)},
+    )
+
+    store = PortfolioStore(tmp_path / "portfolio.db")
+    result = await AssetService(config, store=store).get_portfolio_overview()
+
+    assert result["assets"][0]["tags"] == ("Core", "Personal", "Trading")
+    assert store.load_current_assets("binance")[0].tags == ()
+
+
+@pytest.mark.asyncio
 async def test_run_scenario_combines_live_assets_and_positions(monkeypatch):
     monkeypatch.setattr(
         service_module,
@@ -442,6 +462,7 @@ class _AssetAndPositionProvider(_PositionProvider):
                 unitPriceUsd=10000,
                 valueUsd=10000,
                 updatedAt="2026-09-09T00:00:00Z",
+                wallet="spot",
             )
         ]
 

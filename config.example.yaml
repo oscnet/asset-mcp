@@ -120,3 +120,12 @@ manual:
           name: Home equity estimate
           quantity: 2000000
           currency: CNY
+
+# Optional labels used by allocation and Web filtering. Wallet targets use
+# the normalized accountId/wallet value returned by get_assets.
+tags:
+  assets:
+    HOME: [Long Term]
+  accounts:
+    property-home: [Personal]
+  wallets: {}

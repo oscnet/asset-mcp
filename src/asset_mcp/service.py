@@ -4,7 +4,7 @@ import asyncio
 import multiprocessing as mp
 import os
 import queue
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any
 
@@ -301,7 +301,10 @@ class AssetService:
                 if self.store is not None:
                     self.store.replace_current_assets(result.source, result.items)
                     self.store.save_daily_snapshot(result.source, result.items)
-        return _FetchAssetsResult(assets=assets, provider_errors=provider_errors)
+        return _FetchAssetsResult(
+            assets=_with_configured_tags(assets, config),
+            provider_errors=provider_errors,
+        )
 
     async def _fetch_positions_result(
         self,
@@ -522,3 +525,22 @@ def _with_fetch_status(
     payload["partial"] = result.partial
     payload["providerErrors"] = [error.to_dict() for error in result.provider_errors]
     return payload
+
+
+def _with_configured_tags(assets: list[Asset], config: AppConfig) -> list[Asset]:
+    """把配置的资产、账户和钱包标签合并到标准化资产。
+
+    输入：Provider 或 STALE 缓存返回的资产，以及当前 ``AppConfig`` 标签映射。
+    输出：标签按 Provider、资产、账户、钱包顺序去重后的新资产列表；输入对象保持不变。
+    钱包目标使用稳定的 ``accountId/wallet`` 形式。
+    """
+    tagged: list[Asset] = []
+    for asset in assets:
+        wallet_key = f"{asset.accountId}/{asset.wallet}" if asset.wallet else None
+        configured = [
+            *config.assetTags.get(asset.symbol.upper(), ()),
+            *config.accountTags.get(asset.accountId, ()),
+            *(config.walletTags.get(wallet_key, ()) if wallet_key else ()),
+        ]
+        tagged.append(replace(asset, tags=(*asset.tags, *configured)))
+    return tagged

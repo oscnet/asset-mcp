@@ -129,3 +129,6 @@ class AppConfig:
     onchainIndexer: OnchainIndexerConfig = field(default_factory=OnchainIndexerConfig)
     onchainAccounts: list[OnchainAccountConfig] = field(default_factory=list)
     manualAccounts: list[ManualAccountConfig] = field(default_factory=list)
+    assetTags: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    accountTags: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    walletTags: dict[str, tuple[str, ...]] = field(default_factory=dict)
