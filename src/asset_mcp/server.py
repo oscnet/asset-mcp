@@ -92,6 +92,16 @@ async def get_risk() -> dict[str, Any]:
 
 
 @mcp.tool()
+async def run_scenario(shocks: dict[str, float]) -> dict[str, Any]:
+    """对当前 Portfolio 运行确定性价格冲击测试。
+
+    输入：资产代码到百分比冲击的映射，例如 ``{"BTC": -20, "ETH": -30}``。
+    输出：现货和线性合约的估算损益、净值、回撤及模型假设；不会交易或修改数据。
+    """
+    return await _call_service("run_scenario", shocks=shocks)
+
+
+@mcp.tool()
 async def health_check_sources() -> dict[str, Any]:
     """Check configured sources and accounts without returning secrets."""
     return await _call_service("health_check_sources")

@@ -79,3 +79,23 @@ async def test_get_risk_mcp_tool_delegates_to_service(monkeypatch):
 
     assert result["warnings"] == []
     assert calls == [("get_risk", {})]
+
+
+@pytest.mark.asyncio
+async def test_run_scenario_mcp_tool_delegates_shocks(monkeypatch):
+    calls = []
+
+    async def fake_call_service(method_name: str, **kwargs):
+        """记录 scenario MCP 委派。
+
+        输入：Service 方法名和冲击映射。
+        输出：最小情景结果并记录调用。
+        """
+        calls.append((method_name, kwargs))
+        return {"estimatedValueUsd": 80}
+
+    monkeypatch.setattr(server_module, "_call_service", fake_call_service)
+
+    await server_module.run_scenario(shocks={"BTC": -20})
+
+    assert calls == [("run_scenario", {"shocks": {"BTC": -20}})]

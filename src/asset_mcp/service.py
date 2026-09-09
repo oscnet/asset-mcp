@@ -17,6 +17,7 @@ from asset_mcp.domain.aggregation import (
 from asset_mcp.config import AppConfig, load_config
 from asset_mcp.domain.models import AccountStatus, Asset, Position
 from asset_mcp.domain.risk import build_risk
+from asset_mcp.domain.scenario import run_scenario as calculate_scenario
 from asset_mcp.providers.base import AssetProvider
 from asset_mcp.providers.registry import PROVIDER_FACTORIES, build_provider_entries
 from asset_mcp.storage import PortfolioStore, default_database_path
@@ -157,6 +158,25 @@ class AssetService:
         asset_result = await self._fetch_assets_result()
         position_result = await self._fetch_positions_result()
         payload = build_risk(asset_result.assets, position_result.positions)
+        errors = [*asset_result.provider_errors, *position_result.provider_errors]
+        payload["ok"] = not errors
+        payload["partial"] = bool(errors)
+        payload["providerErrors"] = [error.to_dict() for error in errors]
+        return payload
+
+    async def run_scenario(self, shocks: dict[str, Any]) -> dict[str, Any]:
+        """对当前资产和线性合约运行价格冲击测试。
+
+        输入：资产代码到百分比冲击的映射，例如 ``{"BTC": -20}``。
+        输出：估算净值、损益、回撤和按资产影响，以及同步状态；只计算、不修改仓位。
+        """
+        asset_result = await self._fetch_assets_result()
+        position_result = await self._fetch_positions_result()
+        payload = calculate_scenario(
+            asset_result.assets,
+            position_result.positions,
+            shocks,
+        )
         errors = [*asset_result.provider_errors, *position_result.provider_errors]
         payload["ok"] = not errors
         payload["partial"] = bool(errors)

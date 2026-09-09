@@ -229,6 +229,23 @@ async def test_get_risk_combines_asset_and_position_results(monkeypatch):
     assert result["futures"]["grossNotionalUsd"] == 6200
 
 
+@pytest.mark.asyncio
+async def test_run_scenario_combines_live_assets_and_positions(monkeypatch):
+    monkeypatch.setattr(
+        service_module,
+        "build_provider_entries",
+        lambda config, source=None: [("binance", _AssetAndPositionProvider())],
+    )
+
+    result = await AssetService(AppConfig()).run_scenario({"BTC": -10})
+
+    assert result["ok"] is True
+    assert result["currentValueUsd"] == 10000
+    assert result["spotImpactUsd"] == -1000
+    assert result["futuresImpactUsd"] == -620
+    assert result["estimatedValueUsd"] == 8380
+
+
 class _FastProvider:
     async def fetch_assets(self) -> list[Asset]:
         return [
