@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import asdict, replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -240,6 +240,65 @@ class PortfolioStore:
         with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [_deserialize_position(row[0]) for row in rows]
+
+    def backup_to(self, destination: str | Path) -> Path:
+        """在线备份当前 Portfolio 数据库。
+
+        输入：尚不存在的目标数据库路径；父目录可以不存在，但目标不能与当前库相同。
+        输出：成功备份后的展开路径；目标已存在时抛出 ``FileExistsError``，避免静默覆盖。
+        """
+        target_path = Path(destination).expanduser()
+        if target_path.resolve() == self.path.resolve():
+            raise ValueError("backup destination must differ from database path")
+        if target_path.exists():
+            raise FileExistsError(target_path)
+        target_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            with self._connect() as source_connection:
+                with closing(sqlite3.connect(target_path)) as target_connection:
+                    source_connection.backup(target_connection)
+        except Exception:
+            if target_path.exists():
+                target_path.unlink()
+            raise
+        try:
+            target_path.chmod(0o600)
+        except OSError:
+            pass
+        return target_path
+
+    def restore_from(self, backup_path: str | Path) -> None:
+        """用已验证通过的 SQLite 备份恢复当前数据库。
+
+        输入：存在、完整、schema 版本为 1 到当前版本的 Asset MCP SQLite 文件。
+        输出：无返回值；验证失败时当前库不变并抛出 ``ValueError``，成功后自动迁移旧版本。
+        """
+        source_path = Path(backup_path).expanduser()
+        if not source_path.is_file():
+            raise FileNotFoundError(source_path)
+        if source_path.resolve() == self.path.resolve():
+            raise ValueError("restore source must differ from database path")
+        try:
+            with closing(
+                sqlite3.connect(f"file:{source_path}?mode=ro", uri=True)
+            ) as source_connection:
+                integrity = source_connection.execute("PRAGMA quick_check").fetchone()[0]
+                version = source_connection.execute("PRAGMA user_version").fetchone()[0]
+                tables = {
+                    row[0]
+                    for row in source_connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    ).fetchall()
+                }
+                if integrity != "ok" or version not in range(1, SCHEMA_VERSION + 1):
+                    raise ValueError("backup is not a valid SQLite portfolio database")
+                if "current_assets" not in tables or "snapshot_sources" not in tables:
+                    raise ValueError("backup is not a valid SQLite portfolio database")
+                with closing(sqlite3.connect(self.path)) as target_connection:
+                    source_connection.backup(target_connection)
+        except sqlite3.DatabaseError as exc:
+            raise ValueError("backup is not a valid SQLite portfolio database") from exc
+        self._initialize()
 
     def _initialize(self) -> None:
         """创建或验证当前 SQLite schema。

@@ -127,6 +127,38 @@ def test_schema_v1_database_is_migrated_without_losing_existing_tables(tmp_path)
     assert "position_snapshots" in tables
 
 
+def test_backup_and_restore_round_trip_preserves_original_state(tmp_path):
+    store = PortfolioStore(tmp_path / "portfolio.db")
+    store.replace_current_assets("binance", [_asset("binance", "BTC", "0.1", "6000")])
+    backup_path = tmp_path / "backups" / "portfolio.db"
+
+    assert store.backup_to(backup_path) == backup_path
+    with pytest.raises(FileExistsError):
+        store.backup_to(backup_path)
+
+    store.replace_current_assets("binance", [_asset("binance", "USDT", "100", "100")])
+    store.restore_from(backup_path)
+
+    restored = store.load_current_assets("binance")
+    assert len(restored) == 1
+    assert restored[0].symbol == "BTC"
+    assert restored[0].valueUsd == Decimal("6000")
+
+
+def test_restore_rejects_invalid_database_without_changing_current_state(tmp_path):
+    store = PortfolioStore(tmp_path / "portfolio.db")
+    store.replace_current_assets("okx", [_asset("okx", "ETH", "2", "6000")])
+    invalid_backup = tmp_path / "invalid.db"
+    invalid_backup.write_text("not a sqlite database", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="valid SQLite"):
+        store.restore_from(invalid_backup)
+
+    current = store.load_current_assets("okx")
+    assert len(current) == 1
+    assert current[0].symbol == "ETH"
+
+
 def _asset(source: str, symbol: str, quantity: str, value_usd: str) -> Asset:
     """构造存储测试使用的精确资产。
 
