@@ -183,6 +183,30 @@ class AssetService:
         payload["providerErrors"] = [error.to_dict() for error in errors]
         return payload
 
+    async def get_history(
+        self,
+        days: int = 30,
+        asOf: str | None = None,
+    ) -> dict[str, Any]:
+        """读取每日不可变快照形成净值历史。
+
+        输入：1～3650 天窗口及可选 ISO 截止日期，缺省为 UTC 当天。
+        输出：日期升序的净值点、来源数和资产行数；缺失日期不补零，无 SQLite 仓库时
+        抛出 ``RuntimeError``，防止返回伪造历史。
+        """
+        if self.store is None:
+            raise RuntimeError("get_history requires a SQLite store")
+        points = self.store.load_net_worth_history(days=days, as_of=asOf)
+        return {
+            "days": days,
+            "asOf": asOf,
+            "points": points,
+            "count": len(points),
+            "ok": True,
+            "partial": False,
+            "providerErrors": [],
+        }
+
     async def get_futures_positions(self, source: str | None = None) -> dict[str, Any]:
         """读取并标准化当前交易所合约仓位。
 

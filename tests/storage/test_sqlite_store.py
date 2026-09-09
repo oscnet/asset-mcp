@@ -159,6 +159,43 @@ def test_restore_rejects_invalid_database_without_changing_current_state(tmp_pat
     assert current[0].symbol == "ETH"
 
 
+def test_net_worth_history_aggregates_sources_and_excludes_old_days(tmp_path):
+    store = PortfolioStore(tmp_path / "portfolio.db")
+    store.save_daily_snapshot(
+        "binance",
+        [_asset("binance", "BTC", "0.1", "6000")],
+        "2026-09-08",
+    )
+    store.save_daily_snapshot(
+        "okx",
+        [_asset("okx", "ETH", "1", "3000")],
+        "2026-09-08",
+    )
+    store.save_daily_snapshot(
+        "binance",
+        [_asset("binance", "BTC", "0.11", "6600")],
+        "2026-09-09",
+    )
+    store.save_daily_snapshot(
+        "manual",
+        [_asset("manual", "USD", "100", "100")],
+        "2026-08-01",
+    )
+
+    history = store.load_net_worth_history(days=7, as_of="2026-09-09")
+
+    assert history == [
+        {"date": "2026-09-08", "totalValueUsd": 9000.0, "sourceCount": 2, "assetCount": 2},
+        {"date": "2026-09-09", "totalValueUsd": 6600.0, "sourceCount": 1, "assetCount": 1},
+    ]
+
+
+@pytest.mark.parametrize("days", [0, -1, 3651])
+def test_net_worth_history_rejects_invalid_window(tmp_path, days):
+    with pytest.raises(ValueError, match="days"):
+        PortfolioStore(tmp_path / "portfolio.db").load_net_worth_history(days=days)
+
+
 def _asset(source: str, symbol: str, quantity: str, value_usd: str) -> Asset:
     """构造存储测试使用的精确资产。
 

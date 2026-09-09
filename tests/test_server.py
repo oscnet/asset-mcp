@@ -99,3 +99,23 @@ async def test_run_scenario_mcp_tool_delegates_shocks(monkeypatch):
     await server_module.run_scenario(shocks={"BTC": -20})
 
     assert calls == [("run_scenario", {"shocks": {"BTC": -20}})]
+
+
+@pytest.mark.asyncio
+async def test_get_history_mcp_tool_delegates_window(monkeypatch):
+    calls = []
+
+    async def fake_call_service(method_name: str, **kwargs):
+        """记录 history MCP 委派。
+
+        输入：Service 方法名、窗口和截止日期。
+        输出：最小历史响应并记录调用。
+        """
+        calls.append((method_name, kwargs))
+        return {"points": [], "count": 0}
+
+    monkeypatch.setattr(server_module, "_call_service", fake_call_service)
+
+    await server_module.get_history(days=30, asOf="2026-09-09")
+
+    assert calls == [("get_history", {"days": 30, "asOf": "2026-09-09"})]

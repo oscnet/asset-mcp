@@ -23,7 +23,7 @@
 | M1 精确统一模型 | 09-09～09-11 | Decimal、账户类型/链/位置/价格来源/同步状态，旧 MCP 兼容 | 完成 |
 | M2 合约仓位 | 09-12～09-17 | Binance USD-M、OKX Futures/Perpetual 仓位与未实现盈亏 | 完成 |
 | M3 安全与历史 | 09-18～09-23 | 凭据保险库、SQLite 当前状态、每日幂等快照、STALE | 完成 |
-| M4 组合计算与 MCP | 09-24～09-28 | allocation、risk、scenario、history 五类确定性查询 | 进行中 |
+| M4 组合计算与 MCP | 09-24～09-28 | allocation、risk、scenario、history 五类确定性查询 | 完成 |
 | M5 Web V1 与交付 | 09-29～10-05 | Streamlit Dashboard、配置、明细、CSV/JSON、Docker | 未开始 |
 | M6 真实账户验收 | 10-06～10-08 | Binance/OKX/BTC/EVM/Solana 对账，金额覆盖率 ≥90% | 需 Oscar 本地参与 |
 
@@ -57,8 +57,8 @@
 - [x] `get_allocation`：资产、来源、账户类型、链、位置、标签分组。
 - [x] `get_risk`：币种集中、CEX 集中、稳定币、自托管、合约敞口与杠杆。
 - [x] `run_scenario`：按资产应用价格冲击，并计入线性合约方向敞口。
-- [ ] `get_history`：7/30/90 天净值序列。
-- [ ] 扩展现有 MCP；AI 只能调用确定性只读服务。
+- [x] `get_history`：7/30/90 天及自定义窗口净值序列。
+- [x] 扩展现有 MCP；AI 只能调用确定性只读服务。
 
 ### M5：Web V1 与交付
 

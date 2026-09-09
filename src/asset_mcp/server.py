@@ -102,6 +102,16 @@ async def run_scenario(shocks: dict[str, float]) -> dict[str, Any]:
 
 
 @mcp.tool()
+async def get_history(days: int = 30, asOf: str | None = None) -> dict[str, Any]:
+    """读取 Portfolio 每日净值历史。
+
+    输入：1～3650 天窗口，以及可选 ``YYYY-MM-DD`` 截止日期。
+    输出：实际存在快照的每日总值、来源数和资产行数；缺失日期不补零，严格只读。
+    """
+    return await _call_service("get_history", days=days, asOf=asOf)
+
+
+@mcp.tool()
 async def health_check_sources() -> dict[str, Any]:
     """Check configured sources and accounts without returning secrets."""
     return await _call_service("health_check_sources")

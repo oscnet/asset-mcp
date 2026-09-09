@@ -246,6 +246,25 @@ async def test_run_scenario_combines_live_assets_and_positions(monkeypatch):
     assert result["estimatedValueUsd"] == 8380
 
 
+@pytest.mark.asyncio
+async def test_get_history_reads_daily_snapshot_series(tmp_path):
+    store = PortfolioStore(tmp_path / "portfolio.db")
+    store.save_daily_snapshot(
+        "manual",
+        [_AssetProvider("manual", "USD", 150).fetch_asset()],
+        "2026-09-09",
+    )
+
+    result = await AssetService(AppConfig(), store=store).get_history(
+        days=7,
+        asOf="2026-09-09",
+    )
+
+    assert result["days"] == 7
+    assert result["count"] == 1
+    assert result["points"][0]["totalValueUsd"] == 150
+
+
 class _FastProvider:
     async def fetch_assets(self) -> list[Asset]:
         return [
@@ -289,20 +308,26 @@ class _AssetProvider:
         输入：构造器保存的来源、代码和美元价值。
         输出：用于验证缓存替换行为的单元素 ``Asset`` 列表。
         """
-        return [
-            Asset(
-                source=self.source,
-                accountId=f"{self.source}-main",
-                accountLabel=self.source.title(),
-                category="cash" if self.symbol == "USD" else "stock",
-                symbol=self.symbol,
-                quantity=self.value_usd,
-                currency="USD",
-                unitPriceUsd=1,
-                valueUsd=self.value_usd,
-                updatedAt="2026-09-09T00:00:00Z",
-            )
-        ]
+        return [self.fetch_asset()]
+
+    def fetch_asset(self) -> Asset:
+        """同步构造单个确定性测试资产。
+
+        输入：构造器保存的来源、代码和价值。
+        输出：供异步 Provider 和直接存储夹具复用的 ``Asset``。
+        """
+        return Asset(
+            source=self.source,
+            accountId=f"{self.source}-main",
+            accountLabel=self.source.title(),
+            category="cash" if self.symbol == "USD" else "stock",
+            symbol=self.symbol,
+            quantity=self.value_usd,
+            currency="USD",
+            unitPriceUsd=1,
+            valueUsd=self.value_usd,
+            updatedAt="2026-09-09T00:00:00Z",
+        )
 
     async def health_check(self) -> list[AccountStatus]:
         """返回测试 Provider 健康状态。

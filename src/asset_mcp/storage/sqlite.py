@@ -5,12 +5,12 @@ import os
 import sqlite3
 from contextlib import closing, contextmanager
 from dataclasses import asdict, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
-from asset_mcp.domain.models import Asset, Position, SyncStatus
+from asset_mcp.domain.models import Asset, Position, SyncStatus, json_number
 
 SCHEMA_VERSION = 2
 ASSET_DECIMAL_FIELDS = ("quantity", "unitPriceUsd", "valueUsd")
@@ -240,6 +240,63 @@ class PortfolioStore:
         with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [_deserialize_position(row[0]) for row in rows]
+
+    def load_net_worth_history(
+        self,
+        days: int,
+        as_of: str | date | None = None,
+    ) -> list[dict[str, Any]]:
+        """从不可变资产快照生成每日净值序列。
+
+        输入：1 到 3650 天的窗口，以及可选截止日期；缺省截止日期为 UTC 当天。
+        输出：有成功快照的日期、总美元价值、来源数和资产行数，按日期升序；
+        缺失日期不会补零，非法窗口抛出 ``ValueError``。
+        """
+        if not isinstance(days, int) or days < 1 or days > 3650:
+            raise ValueError("days must be between 1 and 3650")
+        end_day = date.fromisoformat(_snapshot_day(as_of))
+        start_day = end_day - timedelta(days=days - 1)
+        params = (start_day.isoformat(), end_day.isoformat())
+        with self._connect() as connection:
+            source_rows = connection.execute(
+                """
+                SELECT snapshot_date, COUNT(*)
+                FROM snapshot_sources
+                WHERE snapshot_date BETWEEN ? AND ?
+                GROUP BY snapshot_date
+                ORDER BY snapshot_date
+                """,
+                params,
+            ).fetchall()
+            asset_rows = connection.execute(
+                """
+                SELECT snapshot_date, payload
+                FROM asset_snapshots
+                WHERE snapshot_date BETWEEN ? AND ?
+                ORDER BY snapshot_date, source, id
+                """,
+                params,
+            ).fetchall()
+        buckets = {
+            day: {
+                "date": day,
+                "totalValueUsd": Decimal("0"),
+                "sourceCount": source_count,
+                "assetCount": 0,
+            }
+            for day, source_count in source_rows
+        }
+        for day, payload in asset_rows:
+            bucket = buckets[day]
+            bucket["totalValueUsd"] += _deserialize_asset(payload).valueUsd
+            bucket["assetCount"] += 1
+        return [
+            {
+                **bucket,
+                "totalValueUsd": json_number(round(bucket["totalValueUsd"], 8)),
+            }
+            for bucket in buckets.values()
+        ]
 
     def backup_to(self, destination: str | Path) -> Path:
         """在线备份当前 Portfolio 数据库。
