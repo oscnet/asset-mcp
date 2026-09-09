@@ -72,6 +72,8 @@ def test_drilldown_view_builds_cascading_options_and_filtered_rows():
     assert view["options"]["source"] == ["binance", "onchain"]
     assert view["options"]["accountId"] == ["ledger"]
     assert view["totalValueUsd"] == 30000
+    assert len(view["filteredAssets"]) == 1
+    assert view["filteredAssets"][0]["accountId"] == "ledger"
     assert view["rows"] == [
         {
             "币种": "BTC",

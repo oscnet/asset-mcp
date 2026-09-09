@@ -124,6 +124,7 @@ def build_drilldown_view(
     ]
     return {
         "assets": list(assets),
+        "filteredAssets": filtered,
         "options": options,
         "rows": rows,
         "totalValueUsd": sum(float(asset.get("valueUsd") or 0) for asset in filtered),

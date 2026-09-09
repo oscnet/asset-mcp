@@ -128,7 +128,9 @@ uv run asset-mcp-web
 Streamlit listens locally by default. The dashboard is read-only and reuses
 the same config, credential vault, SQLite snapshots, and deterministic risk
 services as the MCP server. Its portfolio drilldown filters asset details in
-order by symbol, platform, account, account type, and location.
+order by symbol, platform, account, account type, and location. The two export
+buttons download the currently filtered rows as Excel-friendly CSV or
+schema-versioned JSON; both formats use a strict safe-field allowlist.
 
 Use **配置中心** in the sidebar to edit account metadata, public wallet
 addresses, manual assets, and tags. The editor refuses inline secrets and

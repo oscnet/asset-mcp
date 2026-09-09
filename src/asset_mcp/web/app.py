@@ -11,6 +11,7 @@ from asset_mcp.web.config_editor import (
     load_editable_config,
     save_editable_sections,
 )
+from asset_mcp.web.export import build_portfolio_exports
 from asset_mcp.web.view_model import (
     DRILLDOWN_COLUMNS,
     build_drilldown_view,
@@ -204,6 +205,34 @@ def _render_drilldown(st: Any, initial_view: dict[str, Any]) -> None:
     view = build_drilldown_view(assets, selections)
     st.caption(f"{len(view['rows'])} assets · ${view['totalValueUsd']:,.2f}")
     st.dataframe(view["rows"], width="stretch", hide_index=True)
+    _render_exports(st, view["filteredAssets"])
+
+
+def _render_exports(st: Any, assets: list[dict[str, Any]]) -> None:
+    """渲染当前筛选资产的 CSV 与 JSON 下载按钮。
+
+    输入：Streamlit 模块及下钻后保留的标准化资产字典。
+    输出：无返回值；生成两个只含白名单字段的内存下载，不在服务器写临时导出文件。
+    """
+    exports = build_portfolio_exports(assets)
+    st.caption("EXPORT CURRENT VIEW · SAFE FIELD ALLOWLIST")
+    csv_column, json_column = st.columns(2, gap="small")
+    with csv_column:
+        st.download_button(
+            "导出当前结果 · CSV",
+            data=exports["csv"]["data"],
+            file_name=exports["csv"]["filename"],
+            mime=exports["csv"]["mime"],
+            width="stretch",
+        )
+    with json_column:
+        st.download_button(
+            "导出当前结果 · JSON",
+            data=exports["json"]["data"],
+            file_name=exports["json"]["filename"],
+            mime=exports["json"]["mime"],
+            width="stretch",
+        )
 
 
 def _render_metrics(st: Any, metrics: list[dict[str, str]]) -> None:
@@ -244,6 +273,7 @@ _STYLES = """
 .metric-sync_status { border-top-color:var(--mint); }
 h3 { font-family:Menlo,monospace !important; font-size:.86rem !important; text-transform:uppercase; letter-spacing:.1em; color:var(--amber) !important; }
 [data-testid='stDataFrame'],[data-testid='stVegaLiteChart'] { border:1px solid var(--line); background:#161a17; padding:.4rem; }
+[data-testid='stDownloadButton'] button { border:1px solid #665125; color:var(--amber); letter-spacing:.04em; }
 @media(max-width:700px){ .block-container{padding:1.2rem}.masthead{align-items:flex-start;gap:1rem}.readonly{display:none} }
 </style>
 """

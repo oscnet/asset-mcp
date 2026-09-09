@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 
 import pytest
@@ -56,6 +57,30 @@ def test_main_renders_complete_dashboard_with_streamlit_contract(monkeypatch):
     assert streamlit.warnings == ["test: review"]
 
 
+def test_render_exports_registers_csv_and_json_downloads():
+    streamlit = _FakeStreamlit()
+    assets = [
+        {
+            "symbol": "BTC",
+            "source": "binance",
+            "accountId": "main",
+            "quantity": 1,
+            "valueUsd": 60000,
+            "apiSecret": "must-not-leak",
+        }
+    ]
+
+    app_module._render_exports(streamlit, assets)
+
+    assert [item["file_name"].rsplit(".", 1)[-1] for item in streamlit.downloads] == [
+        "csv",
+        "json",
+    ]
+    json_download = streamlit.downloads[1]
+    assert json.loads(json_download["data"])["assets"][0]["symbol"] == "BTC"
+    assert b"must-not-leak" not in json_download["data"]
+
+
 class _FakeService:
     def __init__(self):
         self.calls = []
@@ -95,6 +120,7 @@ class _FakeStreamlit:
         self.dataframe_calls = 0
         self.dataframe_widths = []
         self.warnings = []
+        self.downloads = []
         self.sidebar = _FakeSidebar()
 
     def set_page_config(self, **kwargs):
@@ -131,6 +157,14 @@ class _FakeStreamlit:
 
     def error(self, *_args, **_kwargs):
         """输入错误文本；输出无。"""
+
+    def download_button(self, _label, **kwargs):
+        """输入下载按钮参数；输出 ``False`` 并记录可下载文件。"""
+        self.downloads.append(kwargs)
+        return False
+
+    def caption(self, *_args, **_kwargs):
+        """输入辅助说明；输出无。"""
 
 
 class _FakeColumn:
