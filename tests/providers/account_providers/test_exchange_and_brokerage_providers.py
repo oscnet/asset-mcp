@@ -1,4 +1,5 @@
 import os
+from decimal import Decimal
 from urllib.parse import urlparse
 
 import httpx
@@ -103,10 +104,10 @@ def test_okx_provider_keeps_trading_and_funding_balances_separate():
     )
 
     by_symbol_wallet = {(asset.symbol, asset.wallet): asset for asset in assets}
-    assert by_symbol_wallet[("BTC", "trading")].quantity == 0.1
+    assert by_symbol_wallet[("BTC", "trading")].quantity == Decimal("0.1")
     assert by_symbol_wallet[("BTC", "trading")].valueUsd == 6000
     assert by_symbol_wallet[("BTC", "trading")].rawSource == "account_balance"
-    assert by_symbol_wallet[("BTC", "funding")].quantity == 0.2
+    assert by_symbol_wallet[("BTC", "funding")].quantity == Decimal("0.2")
     assert by_symbol_wallet[("BTC", "funding")].valueUsd == 12000
     assert by_symbol_wallet[("BTC", "funding")].rawSource == "funding_balance"
     assert by_symbol_wallet[("USDT", "trading")].valueUsd == 50
@@ -150,8 +151,8 @@ def test_moomoo_provider_uses_cash_by_real_currency_before_summary_currency():
 
     assert len(assets) == 1
     assert assets[0].symbol == "USD"
-    assert assets[0].quantity == 4657.63
-    assert assets[0].valueUsd == 4657.63
+    assert assets[0].quantity == Decimal("4657.63")
+    assert assets[0].valueUsd == Decimal("4657.63")
     assert assets[0].rawSource == "opend_accinfo_cash_by_currency"
 
 
@@ -233,8 +234,8 @@ def test_longbridge_provider_converts_cash_and_stock_positions():
     by_symbol = {asset.symbol: asset for asset in assets}
     assert by_symbol["USD"].quantity == 105
     assert by_symbol["USD"].valueUsd == 105
-    assert by_symbol["HKD"].valueUsd == 102.4
-    assert by_symbol["700.HK"].valueUsd == 102.4
+    assert by_symbol["HKD"].valueUsd == Decimal("102.4")
+    assert by_symbol["700.HK"].valueUsd == Decimal("102.4")
     assert by_symbol["700.HK"].rawSource == "stock_positions_quote"
     assert by_symbol["AAPL.US"].valueUsd == 450
     assert by_symbol["AAPL.US"].rawSource == "stock_positions_cost_price"
@@ -291,12 +292,12 @@ def test_ibkr_provider_converts_flex_cash_and_open_positions():
     by_symbol = {asset.symbol: asset for asset in assets}
     assert by_symbol["USD"].category == "cash"
     assert by_symbol["USD"].valueUsd == 1000
-    assert by_symbol["HKD"].valueUsd == 99.84
+    assert by_symbol["HKD"].valueUsd == Decimal("99.84")
     assert "BASE" not in by_symbol
     assert by_symbol["AAPL"].category == "stock"
     assert by_symbol["AAPL"].wallet == "U1234567"
     assert by_symbol["AAPL"].rawSource == "flex_open_positions"
-    assert by_symbol["700"].valueUsd == 102.4
+    assert by_symbol["700"].valueUsd == Decimal("102.4")
 
 
 @pytest.mark.asyncio

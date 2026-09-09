@@ -1,3 +1,4 @@
+from decimal import Decimal
 from urllib.parse import urlparse
 
 import httpx
@@ -51,12 +52,12 @@ async def test_onchain_provider_discovers_assets_from_addresses():
     assert by_symbol_wallet[("BTC", "bitcoin:bc1qexample")].valueUsd == 50000
     assert by_symbol_wallet[("ETH", "ethereum:0x0000...0001")].quantity == 2
     assert by_symbol_wallet[("ETH", "ethereum:0x0000...0001")].valueUsd == 4000
-    assert by_symbol_wallet[("USDT", "ethereum:0x0000...0001")].quantity == 123.45
+    assert by_symbol_wallet[("USDT", "ethereum:0x0000...0001")].quantity == Decimal("123.45")
     assert by_symbol_wallet[("USDD", "ethereum:0x0000...0001")].quantity == 10
-    assert by_symbol_wallet[("SUSDD", "ethereum:0x0000...0001")].valueUsd == 5.1
+    assert by_symbol_wallet[("SUSDD", "ethereum:0x0000...0001")].valueUsd == Decimal("5.1")
     assert by_symbol_wallet[("SOL", "solana:So1111...1112")].valueUsd == 300
     assert by_symbol_wallet[("JUP123...7890", "solana:So1111...1112")].valueUsd == 25
-    assert by_symbol_wallet[("TRX", "tron:TXYZexample")].valueUsd == 0.5
+    assert by_symbol_wallet[("TRX", "tron:TXYZexample")].valueUsd == Decimal("0.5")
     assert by_symbol_wallet[("USDT", "tron:TXYZexample")].valueUsd == 20
 
 
