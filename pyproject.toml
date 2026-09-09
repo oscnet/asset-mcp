@@ -49,6 +49,9 @@ moomoo = [
 longbridge = [
     "longbridge>=4.0.0",
 ]
+web = [
+    "streamlit>=1.49.0",
+]
 dev = [
     "pandas>=2.0.0",
     "pytest>=8.0.0",
@@ -58,6 +61,7 @@ dev = [
 
 [project.scripts]
 asset-mcp = "asset_mcp.cli:main"
+asset-mcp-web = "asset_mcp.web.app:main"
 
 [build-system]
 requires = ["hatchling"]

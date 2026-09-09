@@ -118,6 +118,17 @@ If you do not need moomoo or Longbridge support, omit those optional extras:
 uv sync --extra dev
 ```
 
+Install and run the optional local Web dashboard:
+
+```bash
+uv sync --extra web
+uv run asset-mcp-web
+```
+
+Streamlit listens locally by default. The dashboard is read-only and reuses
+the same config, credential vault, SQLite snapshots, and deterministic risk
+services as the MCP server.
+
 ## Configure
 
 `asset-mcp init` writes the starter template to
