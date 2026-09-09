@@ -10,6 +10,7 @@ AssetSource = Literal["binance", "okx", "moomoo", "longbridge", "ibkr", "manual"
 DecimalLike = Decimal | str | int | float
 SyncStatus = Literal["FRESH", "STALE", "ERROR"]
 RiskLevel = Literal["Low", "Medium", "High"]
+PositionSide = Literal["long", "short"]
 
 
 def utc_now_iso() -> str:
@@ -73,6 +74,87 @@ class Asset:
 
 
 @dataclass(frozen=True)
+class Position:
+    """统一的只读合约仓位。
+
+    输入：交易所、账户、合约、方向，以及数量、价格、敞口、盈亏、杠杆和保证金数据。
+    输出：内部金额均为 Decimal 的不可变仓位对象，可通过 ``to_dict`` 输出兼容 JSON。
+    """
+
+    source: Literal["binance", "okx"]
+    accountId: str
+    accountLabel: str
+    symbol: str
+    instrument: str
+    side: PositionSide
+    quantity: Decimal
+    entryPriceUsd: Decimal
+    markPriceUsd: Decimal
+    notionalUsd: Decimal
+    unrealizedPnlUsd: Decimal
+    leverage: Decimal
+    accountType: str
+    updatedAt: str
+    liquidationPriceUsd: Decimal | None = None
+    marginUsd: Decimal | None = None
+    rawSource: str | None = None
+    syncStatus: SyncStatus = "FRESH"
+
+    def __post_init__(self) -> None:
+        """规范化仓位数字并验证只读分析所需的不变量。
+
+        输入：构造器接收的 DecimalLike 数字和 long/short 方向。
+        输出：金额字段转为有限 Decimal；非法方向、负数量、负杠杆或非法同步状态抛出
+        ``ValueError``。
+        """
+        for field_name in (
+            "quantity",
+            "entryPriceUsd",
+            "markPriceUsd",
+            "notionalUsd",
+            "unrealizedPnlUsd",
+            "leverage",
+        ):
+            object.__setattr__(self, field_name, decimal_amount(getattr(self, field_name)))
+        object.__setattr__(
+            self,
+            "liquidationPriceUsd",
+            optional_decimal_amount(self.liquidationPriceUsd),
+        )
+        object.__setattr__(self, "marginUsd", optional_decimal_amount(self.marginUsd))
+        if self.side not in ("long", "short"):
+            raise ValueError("side must be long or short")
+        if self.quantity < 0:
+            raise ValueError("quantity must not be negative")
+        if self.leverage < 0:
+            raise ValueError("leverage must not be negative")
+        if self.syncStatus not in ("FRESH", "STALE", "ERROR"):
+            raise ValueError("syncStatus must be FRESH, STALE, or ERROR")
+
+    def to_dict(self) -> dict[str, Any]:
+        """把仓位转换为现有 MCP 可安全序列化的字典。
+
+        输入：当前 Position。
+        输出：字段名稳定的 JSON 兼容字典；Decimal 在传输边界转为 number，缺失的可选
+        价格或保证金保留为 ``None``。
+        """
+        payload = asdict(self)
+        for field_name in (
+            "quantity",
+            "entryPriceUsd",
+            "markPriceUsd",
+            "notionalUsd",
+            "unrealizedPnlUsd",
+            "leverage",
+            "liquidationPriceUsd",
+            "marginUsd",
+        ):
+            value = payload[field_name]
+            payload[field_name] = json_number(value) if value is not None else None
+        return payload
+
+
+@dataclass(frozen=True)
 class AccountStatus:
     source: AssetSource
     accountId: str
@@ -116,6 +198,16 @@ def normalize_tags(tags: Iterable[str]) -> tuple[str, ...]:
             normalized.append(value)
             seen.add(value)
     return tuple(normalized)
+
+
+def optional_decimal_amount(value: DecimalLike | None) -> Decimal | None:
+    """转换可缺失的外部金额。
+
+    输入：``None`` 或 DecimalLike 数字。
+    输出：输入为 ``None`` 时保持 ``None``，否则返回有限 Decimal；非法数字继续抛出
+    ``ValueError``。
+    """
+    return None if value is None else decimal_amount(value)
 
 
 def json_number(value: DecimalLike) -> float:
