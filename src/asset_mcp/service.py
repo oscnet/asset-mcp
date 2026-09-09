@@ -8,7 +8,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from asset_mcp.domain.aggregation import build_dashboard_data, build_net_worth, filter_assets
+from asset_mcp.domain.aggregation import (
+    build_allocation,
+    build_dashboard_data,
+    build_net_worth,
+    filter_assets,
+)
 from asset_mcp.config import AppConfig, load_config
 from asset_mcp.domain.models import AccountStatus, Asset, Position
 from asset_mcp.providers.base import AssetProvider
@@ -124,6 +129,22 @@ class AssetService:
     async def get_asset_dashboard_data(self) -> dict[str, Any]:
         result = await self._fetch_assets_result()
         return _with_fetch_status(build_dashboard_data(result.assets), result)
+
+    async def get_allocation(
+        self,
+        groupBy: str,
+        source: str | None = None,
+        accountId: str | None = None,
+        category: str | None = None,
+    ) -> dict[str, Any]:
+        """读取实时资产并按统一维度计算配置占比。
+
+        输入：分组维度 ``groupBy``，以及可选来源、账户和类别过滤条件。
+        输出：确定性的总价值、分组金额/占比和同步错误元数据；失败来源可包含 STALE 缓存。
+        """
+        result = await self._fetch_assets_result(source=source)
+        assets = filter_assets(result.assets, source, accountId, category)
+        return _with_fetch_status(build_allocation(assets, groupBy), result)
 
     async def get_futures_positions(self, source: str | None = None) -> dict[str, Any]:
         """读取并标准化当前交易所合约仓位。

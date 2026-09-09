@@ -60,6 +60,28 @@ async def get_futures_positions(source: str | None = None) -> dict[str, Any]:
 
 
 @mcp.tool()
+async def get_allocation(
+    groupBy: str,
+    source: str | None = None,
+    accountId: str | None = None,
+    category: str | None = None,
+) -> dict[str, Any]:
+    """按统一资产维度返回确定性配置占比。
+
+    输入：``groupBy`` 支持 asset/source/accountType/chain/location/tag，并可按来源、
+    账户或类别过滤。
+    输出：总美元价值、分组金额/百分比、数据同步状态和脱敏错误；工具严格只读。
+    """
+    return await _call_service(
+        "get_allocation",
+        groupBy=groupBy,
+        source=source,
+        accountId=accountId,
+        category=category,
+    )
+
+
+@mcp.tool()
 async def health_check_sources() -> dict[str, Any]:
     """Check configured sources and accounts without returning secrets."""
     return await _call_service("health_check_sources")

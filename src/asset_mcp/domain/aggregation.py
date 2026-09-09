@@ -5,6 +5,14 @@ from typing import Any, Iterable
 
 from asset_mcp.domain.models import Asset, json_number, sum_value_usd
 
+ALLOCATION_DIMENSIONS = {
+    "asset": "symbol",
+    "source": "source",
+    "accountType": "accountType",
+    "chain": "chain",
+    "location": "location",
+}
+
 
 def filter_assets(
     assets: Iterable[Asset],
@@ -72,6 +80,53 @@ def build_dashboard_data(assets: list[Asset]) -> dict[str, Any]:
         "pieByWallet": _chart_rows(by_wallet, "wallet"),
         "barByAccount": _chart_rows(by_account, "accountId"),
         "topAssets": top_assets[:20],
+    }
+
+
+def build_allocation(assets: list[Asset], group_by: str) -> dict[str, Any]:
+    """按一个统一维度计算资产配置。
+
+    输入：标准化 ``Asset`` 列表，以及 ``asset/source/accountType/chain/location/tag``
+    之一；空维度值归入 ``unassigned``，tag 会把多标签资产展开到多个重叠分组。
+    输出：总美元价值、按价值降序的分组金额/占比/行数，以及 tag 是否重叠的标记；
+    不支持的维度抛出 ``ValueError``。
+    """
+    if group_by != "tag" and group_by not in ALLOCATION_DIMENSIONS:
+        raise ValueError(f"Unsupported allocation dimension: {group_by}")
+    total = sum_value_usd(assets)
+    buckets: dict[str, dict[str, Any]] = {}
+    for asset in assets:
+        if group_by == "tag":
+            keys = asset.tags or ("unassigned",)
+        else:
+            raw_key = getattr(asset, ALLOCATION_DIMENSIONS[group_by])
+            keys = (str(raw_key).strip() if raw_key else "unassigned",)
+        for key in keys:
+            bucket = buckets.setdefault(
+                key,
+                {"key": key, "valueUsd": Decimal("0"), "assetCount": 0},
+            )
+            bucket["valueUsd"] += asset.valueUsd
+            bucket["assetCount"] += 1
+
+    groups = []
+    for bucket in buckets.values():
+        value = round(bucket["valueUsd"], 8)
+        percentage = round(value * 100 / total, 8) if total else Decimal("0")
+        groups.append(
+            {
+                "key": bucket["key"],
+                "valueUsd": json_number(value),
+                "percentage": json_number(percentage),
+                "assetCount": bucket["assetCount"],
+            }
+        )
+    groups.sort(key=lambda row: (-row["valueUsd"], row["key"]))
+    return {
+        "groupBy": group_by,
+        "totalValueUsd": json_number(total),
+        "overlapping": group_by == "tag",
+        "groups": groups,
     }
 
 

@@ -24,3 +24,37 @@ async def test_get_futures_positions_mcp_tool_delegates_source_filter(monkeypatc
 
     assert result["count"] == 0
     assert calls == [("get_futures_positions", {"source": "okx"})]
+
+
+@pytest.mark.asyncio
+async def test_get_allocation_mcp_tool_delegates_filters(monkeypatch):
+    calls = []
+
+    async def fake_call_service(method_name: str, **kwargs):
+        """记录 allocation MCP 委派。
+
+        输入：Service 方法名及筛选参数。
+        输出：最小确定性 allocation 响应，并保存调用供断言。
+        """
+        calls.append((method_name, kwargs))
+        return {"groupBy": "source", "groups": [], "totalValueUsd": 0}
+
+    monkeypatch.setattr(server_module, "_call_service", fake_call_service)
+
+    await server_module.get_allocation(
+        groupBy="source",
+        source="manual",
+        category="cash",
+    )
+
+    assert calls == [
+        (
+            "get_allocation",
+            {
+                "groupBy": "source",
+                "source": "manual",
+                "accountId": None,
+                "category": "cash",
+            },
+        )
+    ]

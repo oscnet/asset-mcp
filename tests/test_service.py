@@ -192,6 +192,27 @@ async def test_futures_positions_persist_and_fall_back_to_stale(monkeypatch, tmp
     assert len(store.load_current_positions("binance")) == 1
 
 
+@pytest.mark.asyncio
+async def test_get_allocation_uses_normalized_assets_and_filters(monkeypatch):
+    monkeypatch.setattr(
+        service_module,
+        "build_provider_entries",
+        lambda config, source=None: [
+            ("manual", _AssetProvider("manual", "USD", 150)),
+            ("ibkr", _AssetProvider("ibkr", "AAPL", 350)),
+        ],
+    )
+    service = AssetService(AppConfig())
+
+    result = await service.get_allocation(groupBy="source", source="manual")
+
+    assert result["ok"] is True
+    assert result["totalValueUsd"] == 150
+    assert result["groups"] == [
+        {"key": "manual", "valueUsd": 150.0, "percentage": 100.0, "assetCount": 1}
+    ]
+
+
 class _FastProvider:
     async def fetch_assets(self) -> list[Asset]:
         return [
