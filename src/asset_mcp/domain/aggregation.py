@@ -27,6 +27,9 @@ def build_net_worth(assets: list[Asset]) -> dict[str, Any]:
         "totalValueUsd": json_number(sum_value_usd(assets)),
         "byCategory": _group(assets, lambda asset: asset.category),
         "bySource": _group(assets, lambda asset: asset.source),
+        "byLocation": _group(assets, lambda asset: asset.location),
+        "byAccountType": _group(assets, lambda asset: asset.accountType),
+        "byChain": _group(assets, lambda asset: asset.chain),
         "byWallet": _group(assets, lambda asset: asset.wallet or asset.source),
         "byAccount": _group(
             assets,
@@ -79,7 +82,10 @@ def _group(
 ) -> list[dict[str, Any]]:
     buckets: dict[str, dict[str, Any]] = {}
     for asset in assets:
-        key = str(key_fn(asset))
+        raw_key = key_fn(asset)
+        if raw_key is None or str(raw_key).strip() == "":
+            continue
+        key = str(raw_key)
         if key not in buckets:
             buckets[key] = {"key": key, "valueUsd": Decimal("0"), "assetCount": 0}
             if meta_fn is not None:

@@ -3,11 +3,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Any, Literal
+from typing import Any, Iterable, Literal
 
 AssetCategory = Literal["crypto", "stock", "cash", "manual"]
 AssetSource = Literal["binance", "okx", "moomoo", "longbridge", "ibkr", "manual", "onchain"]
 DecimalLike = Decimal | str | int | float
+SyncStatus = Literal["FRESH", "STALE", "ERROR"]
+RiskLevel = Literal["Low", "Medium", "High"]
 
 
 def utc_now_iso() -> str:
@@ -29,6 +31,14 @@ class Asset:
     name: str | None = None
     rawSource: str | None = None
     wallet: str | None = None
+    accountType: str | None = None
+    chain: str | None = None
+    location: str | None = None
+    priceSource: str | None = None
+    syncStatus: SyncStatus = "FRESH"
+    strategy: str | None = None
+    riskLevel: RiskLevel | None = None
+    tags: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """把 Provider 传入的数字统一为有限 Decimal。
@@ -41,6 +51,13 @@ class Asset:
         object.__setattr__(self, "quantity", decimal_amount(self.quantity))
         object.__setattr__(self, "unitPriceUsd", decimal_amount(self.unitPriceUsd))
         object.__setattr__(self, "valueUsd", decimal_amount(self.valueUsd))
+        if self.syncStatus not in ("FRESH", "STALE", "ERROR"):
+            raise ValueError("syncStatus must be FRESH, STALE, or ERROR")
+        object.__setattr__(self, "location", self.location or self.source)
+        object.__setattr__(self, "accountType", self.accountType or _default_account_type(self))
+        object.__setattr__(self, "chain", self.chain or _default_chain(self))
+        object.__setattr__(self, "priceSource", self.priceSource or self.source)
+        object.__setattr__(self, "tags", normalize_tags(self.tags))
 
     def to_dict(self) -> dict[str, Any]:
         """输出保持现有 MCP 契约的 JSON 兼容字典。
@@ -85,6 +102,22 @@ def decimal_amount(value: DecimalLike) -> Decimal:
     return result
 
 
+def normalize_tags(tags: Iterable[str]) -> tuple[str, ...]:
+    """规范化资产标签并保持稳定顺序。
+
+    输入：任意字符串可迭代对象；每个标签允许包含首尾空白和重复值。
+    输出：去除空白、空标签和重复项后的不可变元组，首次出现顺序保持不变。
+    """
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for tag in tags:
+        value = str(tag).strip()
+        if value and value not in seen:
+            normalized.append(value)
+            seen.add(value)
+    return tuple(normalized)
+
+
 def json_number(value: DecimalLike) -> float:
     """在 JSON/MCP 边界把精确金额转换为兼容的 number。
 
@@ -101,3 +134,19 @@ def sum_value_usd(assets: list[Asset]) -> Decimal:
     输出：Decimal 总值，保留最多八位美元小数，与既有输出精度一致。
     """
     return round(sum((asset.valueUsd for asset in assets), start=Decimal("0")), 8)
+
+
+def _default_account_type(asset: Asset) -> str:
+    if asset.source == "onchain":
+        return "wallet"
+    if asset.source in ("binance", "okx"):
+        return asset.wallet or "exchange"
+    if asset.source in ("moomoo", "longbridge", "ibkr"):
+        return "brokerage"
+    return "manual"
+
+
+def _default_chain(asset: Asset) -> str | None:
+    if asset.source != "onchain" or not asset.wallet or ":" not in asset.wallet:
+        return None
+    return asset.wallet.split(":", 1)[0] or None

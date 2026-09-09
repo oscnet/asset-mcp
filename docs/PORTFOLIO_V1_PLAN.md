@@ -20,7 +20,7 @@
 | 里程碑 | 日期 | 可衡量产出 | 状态 |
 |---|---|---|---|
 | M0 基线与准入 | 09-09 | Fork、Spike、上游基线、开发分支和路线图 | 完成 |
-| M1 精确统一模型 | 09-09～09-11 | Decimal、账户类型/链/位置/价格来源/同步状态，旧 MCP 兼容 | 进行中（Decimal 完成） |
+| M1 精确统一模型 | 09-09～09-11 | Decimal、账户类型/链/位置/价格来源/同步状态，旧 MCP 兼容 | 进行中（领域模型完成） |
 | M2 合约仓位 | 09-12～09-17 | Binance USD-M、OKX Futures/Perpetual 仓位与未实现盈亏 | 未开始 |
 | M3 安全与历史 | 09-18～09-23 | 凭据保险库、SQLite 当前状态、每日幂等快照、STALE | 未开始 |
 | M4 组合计算与 MCP | 09-24～09-28 | allocation、risk、scenario、history 五类确定性查询 | 未开始 |
@@ -33,8 +33,8 @@
 
 - [x] 固定上游提交并建立 Fork 开发分支。
 - [x] 用 `Decimal` 替换领域层金额计算，同时保持 MCP JSON 可序列化。
-- [ ] 增加 `accountType`、`chain`、`location`、`priceSource`、`syncStatus` 可选字段。
-- [ ] 增加策略、风险与自定义标签的数据结构。
+- [x] 增加 `accountType`、`chain`、`location`、`priceSource`、`syncStatus` 可选字段。
+- [x] 增加策略、风险与自定义标签的数据结构。
 - [ ] 更新所有 Provider 映射与兼容测试。
 
 ### M2：合约仓位
