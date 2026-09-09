@@ -13,6 +13,7 @@ from asset_mcp.config import AppConfig, load_config
 from asset_mcp.domain.models import AccountStatus, Asset
 from asset_mcp.providers.base import AssetProvider
 from asset_mcp.providers.registry import PROVIDER_FACTORIES, build_provider_entries
+from asset_mcp.storage import PortfolioStore, default_database_path
 
 DEFAULT_PROVIDER_TIMEOUT_SECONDS = 20.0
 PROCESS_ISOLATED_SOURCES = {"longbridge", "moomoo"}
@@ -64,9 +65,21 @@ class AssetService:
         self,
         config: AppConfig | None = None,
         provider_timeout_seconds: float = DEFAULT_PROVIDER_TIMEOUT_SECONDS,
+        store: PortfolioStore | None = None,
     ):
+        """创建只读资产聚合服务。
+
+        输入：可选应用配置、单来源超时秒数和 SQLite 仓库；不传仓库时保持原有的
+        无状态行为，传入仓库时保存成功数据并为失败来源回退到 STALE 缓存。
+        输出：可执行资产、净值、Dashboard 和健康检查查询的 ``AssetService``。
+        """
         self.config = config
         self.provider_timeout_seconds = provider_timeout_seconds
+        self.store = (
+            PortfolioStore(default_database_path())
+            if store is None and config is None
+            else store
+        )
 
     async def get_assets(
         self,
@@ -144,8 +157,18 @@ class AssetService:
         for result in results:
             if result.error is not None:
                 provider_errors.append(result.error)
+                if self.store is not None:
+                    assets.extend(
+                        self.store.load_current_assets(
+                            source=result.source,
+                            sync_status="STALE",
+                        )
+                    )
             else:
                 assets.extend(result.items)
+                if self.store is not None:
+                    self.store.replace_current_assets(result.source, result.items)
+                    self.store.save_daily_snapshot(result.source, result.items)
         return _FetchAssetsResult(assets=assets, provider_errors=provider_errors)
 
     async def _run_provider_action(

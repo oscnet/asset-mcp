@@ -8,6 +8,7 @@ import asset_mcp.service as service_module
 from asset_mcp.config import AppConfig
 from asset_mcp.domain.models import AccountStatus, Asset
 from asset_mcp.service import AssetService
+from asset_mcp.storage import PortfolioStore
 
 
 @pytest.mark.asyncio
@@ -98,6 +99,65 @@ async def test_assets_payload_includes_partial_metadata(monkeypatch):
     assert result["providerErrors"][0]["code"] == "provider_timeout"
 
 
+@pytest.mark.asyncio
+async def test_failed_provider_uses_last_successful_assets_as_stale(monkeypatch, tmp_path):
+    store = PortfolioStore(tmp_path / "portfolio.db")
+    providers = [
+        ("manual", _FastProvider()),
+        ("ibkr", _AssetProvider("ibkr", "AAPL", 200)),
+    ]
+    monkeypatch.setattr(
+        service_module,
+        "build_provider_entries",
+        lambda config, source=None: providers,
+    )
+    service = AssetService(AppConfig(), provider_timeout_seconds=0.01, store=store)
+    first = await service.get_assets_payload()
+    assert first["ok"] is True
+
+    providers[:] = [
+        ("manual", _AssetProvider("manual", "USD", 150)),
+        ("ibkr", _FailingProvider()),
+    ]
+    second = await service.get_assets_payload()
+
+    by_source = {asset["source"]: asset for asset in second["assets"]}
+    assert second["ok"] is False
+    assert second["partial"] is True
+    assert second["count"] == 2
+    assert by_source["manual"]["valueUsd"] == 150
+    assert by_source["manual"]["syncStatus"] == "FRESH"
+    assert by_source["ibkr"]["valueUsd"] == 200
+    assert by_source["ibkr"]["syncStatus"] == "STALE"
+
+
+@pytest.mark.asyncio
+async def test_failed_provider_without_cache_does_not_invent_zero_asset(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        service_module,
+        "build_provider_entries",
+        lambda config, source=None: [("ibkr", _FailingProvider())],
+    )
+    store = PortfolioStore(tmp_path / "portfolio.db")
+
+    result = await AssetService(AppConfig(), store=store).get_assets_payload()
+
+    assert result["assets"] == []
+    assert result["count"] == 0
+    assert result["partial"] is True
+    assert result["providerErrors"][0]["source"] == "ibkr"
+
+
+def test_service_uses_default_store_for_normal_runtime(monkeypatch, tmp_path):
+    database_path = tmp_path / "portfolio.db"
+    monkeypatch.setenv("ASSET_MCP_DATABASE", str(database_path))
+
+    service = AssetService()
+
+    assert service.store is not None
+    assert service.store.path == database_path
+
+
 class _FastProvider:
     async def fetch_assets(self) -> list[Asset]:
         return [
@@ -127,3 +187,66 @@ class _BlockingProvider:
     async def health_check(self) -> list[AccountStatus]:
         time.sleep(0.2)
         return []
+
+
+class _AssetProvider:
+    def __init__(self, source: str, symbol: str, value_usd: int):
+        self.source = source
+        self.symbol = symbol
+        self.value_usd = value_usd
+
+    async def fetch_assets(self) -> list[Asset]:
+        """返回单个确定性测试资产。
+
+        输入：构造器保存的来源、代码和美元价值。
+        输出：用于验证缓存替换行为的单元素 ``Asset`` 列表。
+        """
+        return [
+            Asset(
+                source=self.source,
+                accountId=f"{self.source}-main",
+                accountLabel=self.source.title(),
+                category="cash" if self.symbol == "USD" else "stock",
+                symbol=self.symbol,
+                quantity=self.value_usd,
+                currency="USD",
+                unitPriceUsd=1,
+                valueUsd=self.value_usd,
+                updatedAt="2026-09-09T00:00:00Z",
+            )
+        ]
+
+    async def health_check(self) -> list[AccountStatus]:
+        """返回测试 Provider 健康状态。
+
+        输入：无。
+        输出：与构造器来源对应的单个成功 ``AccountStatus``。
+        """
+        return [
+            AccountStatus(
+                self.source,
+                f"{self.source}-main",
+                self.source.title(),
+                True,
+                True,
+                "ok",
+            )
+        ]
+
+
+class _FailingProvider:
+    async def fetch_assets(self) -> list[Asset]:
+        """模拟来源读取失败。
+
+        输入：无。
+        输出：不返回资产，固定抛出 ``RuntimeError`` 供失败隔离测试使用。
+        """
+        raise RuntimeError("provider unavailable")
+
+    async def health_check(self) -> list[AccountStatus]:
+        """模拟健康检查失败。
+
+        输入：无。
+        输出：不返回状态，固定抛出 ``RuntimeError``。
+        """
+        raise RuntimeError("provider unavailable")

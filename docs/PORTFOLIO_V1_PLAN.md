@@ -22,7 +22,7 @@
 | M0 基线与准入 | 09-09 | Fork、Spike、上游基线、开发分支和路线图 | 完成 |
 | M1 精确统一模型 | 09-09～09-11 | Decimal、账户类型/链/位置/价格来源/同步状态，旧 MCP 兼容 | 完成 |
 | M2 合约仓位 | 09-12～09-17 | Binance USD-M、OKX Futures/Perpetual 仓位与未实现盈亏 | 完成 |
-| M3 安全与历史 | 09-18～09-23 | 凭据保险库、SQLite 当前状态、每日幂等快照、STALE | 未开始 |
+| M3 安全与历史 | 09-18～09-23 | 凭据保险库、SQLite 当前状态、每日幂等快照、STALE | 进行中 |
 | M4 组合计算与 MCP | 09-24～09-28 | allocation、risk、scenario、history 五类确定性查询 | 未开始 |
 | M5 Web V1 与交付 | 09-29～10-05 | Streamlit Dashboard、配置、明细、CSV/JSON、Docker | 未开始 |
 | M6 真实账户验收 | 10-06～10-08 | Binance/OKX/BTC/EVM/Solana 对账，金额覆盖率 ≥90% | 需 Oscar 本地参与 |
@@ -49,7 +49,7 @@
 - [ ] 实现 OS Keychain 优先、Fernet 文件保险库回退的凭据引用。
 - [ ] YAML 只保存 `credentialRef`，保留旧配置的一次性迁移入口。
 - [ ] 实现 SQLite schema、迁移、当前持仓和每日快照。
-- [ ] 来源失败时保留最后成功数据并标记 `STALE`。
+- [x] 来源失败时保留最后成功资产并标记 `STALE`。
 - [ ] 实现备份与恢复命令。
 
 ### M4：组合计算与 MCP
