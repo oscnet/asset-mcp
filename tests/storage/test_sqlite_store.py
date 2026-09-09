@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from asset_mcp.domain.models import Asset
+from asset_mcp.domain.models import Asset, Position
 from asset_mcp.storage import PortfolioStore, default_database_path
 
 
@@ -65,7 +65,7 @@ def test_store_creates_parent_directory_and_schema_version(tmp_path):
 
     assert store.path == database_path
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
 
 
 def test_default_database_path_prefers_environment(monkeypatch, tmp_path):
@@ -73,6 +73,58 @@ def test_default_database_path_prefers_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("ASSET_MCP_DATABASE", str(configured_path))
 
     assert default_database_path() == configured_path
+
+
+def test_current_positions_round_trip_decimal_and_stale_status(tmp_path):
+    store = PortfolioStore(tmp_path / "portfolio.db")
+    store.replace_current_positions("binance", [_position("binance", "BTCUSDT")])
+
+    positions = store.load_current_positions(source="binance", sync_status="STALE")
+
+    assert len(positions) == 1
+    assert positions[0].quantity == Decimal("0.123456789123456789")
+    assert positions[0].notionalUsd == Decimal("7654.320980987654321")
+    assert positions[0].liquidationPriceUsd == Decimal("45000.12345678")
+    assert positions[0].syncStatus == "STALE"
+
+
+def test_position_snapshot_is_independent_from_asset_snapshot(tmp_path):
+    store = PortfolioStore(tmp_path / "portfolio.db")
+    asset = _asset("binance", "BTC", "0.1", "6000")
+    position = _position("binance", "BTCUSDT")
+
+    assert store.save_daily_snapshot("binance", [asset], "2026-09-09") is True
+    assert store.save_daily_position_snapshot("binance", [position], "2026-09-09") is True
+    assert store.save_daily_position_snapshot("binance", [], "2026-09-09") is False
+
+    positions = store.load_position_snapshot("2026-09-09", source="binance")
+    assert len(positions) == 1
+    assert positions[0].instrument == "BTCUSDT"
+    assert positions[0].unrealizedPnlUsd == Decimal("123.456789")
+
+
+def test_schema_v1_database_is_migrated_without_losing_existing_tables(tmp_path):
+    database_path = tmp_path / "portfolio.db"
+    with closing(sqlite3.connect(database_path)) as connection:
+        connection.execute(
+            "CREATE TABLE current_assets (id INTEGER PRIMARY KEY, source TEXT, payload TEXT)"
+        )
+        connection.execute("PRAGMA user_version = 1")
+        connection.commit()
+
+    PortfolioStore(database_path)
+
+    with closing(sqlite3.connect(database_path)) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert "current_assets" in tables
+    assert "current_positions" in tables
+    assert "position_snapshots" in tables
 
 
 def _asset(source: str, symbol: str, quantity: str, value_usd: str) -> Asset:
@@ -96,4 +148,30 @@ def _asset(source: str, symbol: str, quantity: str, value_usd: str) -> Asset:
         strategy="core",
         riskLevel="Medium",
         tags=("long-term",),
+    )
+
+
+def _position(source: str, instrument: str) -> Position:
+    """构造存储测试使用的精确合约仓位。
+
+    输入：交易所来源和合约代码。
+    输出：包含高精度金额、杠杆、清算价与保证金的 ``Position`` 测试对象。
+    """
+    return Position(
+        source=source,
+        accountId=f"{source}-main",
+        accountLabel=source.title(),
+        symbol="BTC",
+        instrument=instrument,
+        side="long",
+        quantity="0.123456789123456789",
+        entryPriceUsd="60000.12345678",
+        markPriceUsd="62000.87654321",
+        notionalUsd="7654.320980987654321",
+        unrealizedPnlUsd="123.456789",
+        leverage="3",
+        liquidationPriceUsd="45000.12345678",
+        marginUsd="2551.440326995884773667",
+        accountType="um_futures",
+        updatedAt="2026-09-09T08:00:00+00:00",
     )

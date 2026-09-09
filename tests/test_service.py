@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 
 import pytest
 
 import asset_mcp.service as service_module
 from asset_mcp.config import AppConfig
-from asset_mcp.domain.models import AccountStatus, Asset
+from asset_mcp.domain.models import AccountStatus, Asset, Position
 from asset_mcp.service import AssetService
 from asset_mcp.storage import PortfolioStore
 
@@ -158,6 +159,39 @@ def test_service_uses_default_store_for_normal_runtime(monkeypatch, tmp_path):
     assert service.store.path == database_path
 
 
+@pytest.mark.asyncio
+async def test_futures_positions_persist_and_fall_back_to_stale(monkeypatch, tmp_path):
+    store = PortfolioStore(tmp_path / "portfolio.db")
+    providers = [
+        ("manual", _FastProvider()),
+        ("binance", _PositionProvider()),
+    ]
+    monkeypatch.setattr(
+        service_module,
+        "build_provider_entries",
+        lambda config, source=None: providers,
+    )
+    service = AssetService(AppConfig(), store=store)
+
+    first = await service.get_futures_positions()
+    assert first["ok"] is True
+    assert first["count"] == 1
+    assert first["positions"][0]["syncStatus"] == "FRESH"
+
+    providers[:] = [("binance", _FailingPositionProvider())]
+    second = await service.get_futures_positions()
+
+    assert second["ok"] is False
+    assert second["partial"] is True
+    assert second["count"] == 1
+    assert second["positions"][0]["instrument"] == "BTCUSDT"
+    assert second["positions"][0]["syncStatus"] == "STALE"
+    assert second["providerErrors"][0]["source"] == "binance"
+    today = datetime.now(timezone.utc).date().isoformat()
+    assert len(store.load_position_snapshot(today)) == 1
+    assert len(store.load_current_positions("binance")) == 1
+
+
 class _FastProvider:
     async def fetch_assets(self) -> list[Asset]:
         return [
@@ -250,3 +284,42 @@ class _FailingProvider:
         输出：不返回状态，固定抛出 ``RuntimeError``。
         """
         raise RuntimeError("provider unavailable")
+
+
+class _PositionProvider:
+    async def fetch_positions(self) -> list[Position]:
+        """返回一个确定性 Binance 测试仓位。
+
+        输入：无。
+        输出：用于验证仓位持久化和 STALE 回退的单元素 ``Position`` 列表。
+        """
+        return [
+            Position(
+                source="binance",
+                accountId="binance-main",
+                accountLabel="Binance",
+                symbol="BTC",
+                instrument="BTCUSDT",
+                side="long",
+                quantity="0.1",
+                entryPriceUsd="60000",
+                markPriceUsd="62000",
+                notionalUsd="6200",
+                unrealizedPnlUsd="200",
+                leverage="3",
+                marginUsd="2066.66666667",
+                liquidationPriceUsd="45000",
+                accountType="um_futures",
+                updatedAt="2026-09-09T00:00:00Z",
+            )
+        ]
+
+
+class _FailingPositionProvider:
+    async def fetch_positions(self) -> list[Position]:
+        """模拟交易所仓位读取失败。
+
+        输入：无。
+        输出：不返回仓位，固定抛出 ``RuntimeError`` 供缓存回退测试使用。
+        """
+        raise RuntimeError("position provider unavailable")

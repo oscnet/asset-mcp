@@ -10,7 +10,7 @@ from typing import Any
 
 from asset_mcp.domain.aggregation import build_dashboard_data, build_net_worth, filter_assets
 from asset_mcp.config import AppConfig, load_config
-from asset_mcp.domain.models import AccountStatus, Asset
+from asset_mcp.domain.models import AccountStatus, Asset, Position
 from asset_mcp.providers.base import AssetProvider
 from asset_mcp.providers.registry import PROVIDER_FACTORIES, build_provider_entries
 from asset_mcp.storage import PortfolioStore, default_database_path
@@ -46,6 +46,16 @@ class _ProviderError:
 @dataclass(frozen=True)
 class _FetchAssetsResult:
     assets: list[Asset]
+    provider_errors: list[_ProviderError]
+
+    @property
+    def partial(self) -> bool:
+        return bool(self.provider_errors)
+
+
+@dataclass(frozen=True)
+class _FetchPositionsResult:
+    positions: list[Position]
     provider_errors: list[_ProviderError]
 
     @property
@@ -115,6 +125,20 @@ class AssetService:
         result = await self._fetch_assets_result()
         return _with_fetch_status(build_dashboard_data(result.assets), result)
 
+    async def get_futures_positions(self, source: str | None = None) -> dict[str, Any]:
+        """读取并标准化当前交易所合约仓位。
+
+        输入：可选 ``binance`` 或 ``okx`` 来源过滤条件；其他 Provider 会自动跳过。
+        输出：包含仓位、数量、部分失败标记和脱敏 Provider 错误的字典；失败来源若有
+        SQLite 成功缓存，则以 ``STALE`` 状态返回旧仓位而不是伪造零仓位。
+        """
+        result = await self._fetch_positions_result(source=source)
+        payload: dict[str, Any] = {
+            "positions": [position.to_dict() for position in result.positions],
+            "count": len(result.positions),
+        }
+        return _with_fetch_status(payload, result)
+
     async def health_check_sources(self) -> dict[str, Any]:
         config = self._config()
         results = await asyncio.gather(
@@ -170,6 +194,55 @@ class AssetService:
                     self.store.replace_current_assets(result.source, result.items)
                     self.store.save_daily_snapshot(result.source, result.items)
         return _FetchAssetsResult(assets=assets, provider_errors=provider_errors)
+
+    async def _fetch_positions_result(
+        self,
+        source: str | None = None,
+    ) -> _FetchPositionsResult:
+        """执行支持仓位读取的 Provider 并处理持久化。
+
+        输入：可选来源过滤条件，以及 Service 中的配置、超时和 SQLite 仓库。
+        输出：成功或 STALE 仓位与结构化错误；成功结果原子更新当前仓位并首次写入
+        当日不可变快照，失败且无缓存时仅返回错误。
+        """
+        config = self._config()
+        entries = [
+            (provider_source, provider)
+            for provider_source, provider in build_provider_entries(config, source=source)
+            if callable(getattr(provider, "fetch_positions", None))
+        ]
+        results = await asyncio.gather(
+            *[
+                self._run_provider_action(
+                    provider_source,
+                    provider,
+                    config,
+                    "fetch_positions",
+                )
+                for provider_source, provider in entries
+            ],
+        )
+        positions: list[Position] = []
+        provider_errors: list[_ProviderError] = []
+        for result in results:
+            if result.error is not None:
+                provider_errors.append(result.error)
+                if self.store is not None:
+                    positions.extend(
+                        self.store.load_current_positions(
+                            source=result.source,
+                            sync_status="STALE",
+                        )
+                    )
+            else:
+                positions.extend(result.items)
+                if self.store is not None:
+                    self.store.replace_current_positions(result.source, result.items)
+                    self.store.save_daily_position_snapshot(result.source, result.items)
+        return _FetchPositionsResult(
+            positions=positions,
+            provider_errors=provider_errors,
+        )
 
     async def _run_provider_action(
         self,
@@ -333,7 +406,10 @@ def _raise_provider_errors(errors: list[_ProviderError]) -> None:
     raise RuntimeError(f"Failed to fetch one or more providers: {names}")
 
 
-def _with_fetch_status(payload: dict[str, Any], result: _FetchAssetsResult) -> dict[str, Any]:
+def _with_fetch_status(
+    payload: dict[str, Any],
+    result: _FetchAssetsResult | _FetchPositionsResult,
+) -> dict[str, Any]:
     payload["ok"] = not result.provider_errors
     payload["partial"] = result.partial
     payload["providerErrors"] = [error.to_dict() for error in result.provider_errors]

@@ -50,6 +50,16 @@ async def get_asset_dashboard_data() -> dict[str, Any]:
 
 
 @mcp.tool()
+async def get_futures_positions(source: str | None = None) -> dict[str, Any]:
+    """读取统一的 Binance/OKX 合约仓位。
+
+    输入：可选 ``source``，目前支持 ``binance`` 或 ``okx``；缺省时读取全部。
+    输出：只读仓位列表、数量、同步状态、部分失败标记及脱敏错误，不包含 API 凭据。
+    """
+    return await _call_service("get_futures_positions", source=source)
+
+
+@mcp.tool()
 async def health_check_sources() -> dict[str, Any]:
     """Check configured sources and accounts without returning secrets."""
     return await _call_service("health_check_sources")

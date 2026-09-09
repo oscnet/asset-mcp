@@ -10,10 +10,20 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Iterator
 
-from asset_mcp.domain.models import Asset, SyncStatus
+from asset_mcp.domain.models import Asset, Position, SyncStatus
 
-SCHEMA_VERSION = 1
-DECIMAL_FIELDS = ("quantity", "unitPriceUsd", "valueUsd")
+SCHEMA_VERSION = 2
+ASSET_DECIMAL_FIELDS = ("quantity", "unitPriceUsd", "valueUsd")
+POSITION_DECIMAL_FIELDS = (
+    "quantity",
+    "entryPriceUsd",
+    "markPriceUsd",
+    "notionalUsd",
+    "unrealizedPnlUsd",
+    "leverage",
+    "liquidationPriceUsd",
+    "marginUsd",
+)
 
 
 def default_database_path() -> Path:
@@ -80,6 +90,46 @@ class PortfolioStore:
             return [replace(asset, syncStatus=sync_status) for asset in assets]
         return assets
 
+    def replace_current_positions(self, source: str, positions: list[Position]) -> None:
+        """原子替换一个交易所来源的最新合约仓位。
+
+        输入：``binance`` 或 ``okx`` 来源，以及该来源本次成功读取的完整仓位列表；
+        空列表表示确认当前无仓位。
+        输出：无返回值；只替换指定来源，Decimal 精度在 JSON 存储中保持不变。
+        """
+        if any(position.source != source for position in positions):
+            raise ValueError("all positions must match the requested source")
+        with self._connect() as connection:
+            connection.execute("DELETE FROM current_positions WHERE source = ?", (source,))
+            connection.executemany(
+                "INSERT INTO current_positions (source, payload) VALUES (?, ?)",
+                [(source, _serialize_position(position)) for position in positions],
+            )
+
+    def load_current_positions(
+        self,
+        source: str | None = None,
+        sync_status: SyncStatus | None = None,
+    ) -> list[Position]:
+        """读取最新成功合约仓位缓存。
+
+        输入：可选交易所来源，以及可选的返回状态覆盖值；传入 ``STALE`` 时仅修改
+        返回对象状态，不覆盖数据库中的最后成功记录。
+        输出：按来源和写入顺序稳定排列、金额恢复为 Decimal 的 ``Position`` 列表。
+        """
+        query = "SELECT payload FROM current_positions"
+        params: tuple[str, ...] = ()
+        if source is not None:
+            query += " WHERE source = ?"
+            params = (source,)
+        query += " ORDER BY source, id"
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        positions = [_deserialize_position(row[0]) for row in rows]
+        if sync_status is not None:
+            return [replace(position, syncStatus=sync_status) for position in positions]
+        return positions
+
     def save_daily_snapshot(
         self,
         source: str,
@@ -135,6 +185,62 @@ class PortfolioStore:
             rows = connection.execute(query, params).fetchall()
         return [_deserialize_asset(row[0]) for row in rows]
 
+    def save_daily_position_snapshot(
+        self,
+        source: str,
+        positions: list[Position],
+        snapshot_date: str | date | None = None,
+    ) -> bool:
+        """首次成功时保存一个交易所来源的每日仓位快照。
+
+        输入：交易所来源、完整仓位列表及可选 ISO 日期；资产快照是否存在不影响本操作。
+        输出：当日该来源首次写入返回 ``True``；重复调用保持原仓位并返回 ``False``。
+        """
+        if any(position.source != source for position in positions):
+            raise ValueError("all positions must match the requested source")
+        day = _snapshot_day(snapshot_date)
+        captured_at = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO position_snapshot_sources
+                    (snapshot_date, source, captured_at)
+                VALUES (?, ?, ?)
+                """,
+                (day, source, captured_at),
+            )
+            if cursor.rowcount == 0:
+                return False
+            connection.executemany(
+                """
+                INSERT INTO position_snapshots (snapshot_date, source, payload)
+                VALUES (?, ?, ?)
+                """,
+                [(day, source, _serialize_position(position)) for position in positions],
+            )
+        return True
+
+    def load_position_snapshot(
+        self,
+        snapshot_date: str | date,
+        source: str | None = None,
+    ) -> list[Position]:
+        """读取指定日期的不可变合约仓位快照。
+
+        输入：ISO 日期或 ``date`` 对象，以及可选交易所来源。
+        输出：按来源和快照行顺序排列的 ``Position`` 列表；不存在时返回空列表。
+        """
+        day = _snapshot_day(snapshot_date)
+        query = "SELECT payload FROM position_snapshots WHERE snapshot_date = ?"
+        params: tuple[str, ...] = (day,)
+        if source is not None:
+            query += " AND source = ?"
+            params = (day, source)
+        query += " ORDER BY source, id"
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [_deserialize_position(row[0]) for row in rows]
+
     def _initialize(self) -> None:
         """创建或验证当前 SQLite schema。
 
@@ -188,6 +294,50 @@ class PortfolioStore:
                     PRAGMA user_version = 1;
                     """
                 )
+                version = 1
+            if version == 1:
+                connection.executescript(
+                    """
+                    CREATE TABLE current_positions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        source TEXT NOT NULL,
+                        payload TEXT NOT NULL
+                    );
+                    CREATE INDEX current_positions_source_idx ON current_positions(source);
+
+                    CREATE TABLE position_snapshot_sources (
+                        snapshot_date TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        captured_at TEXT NOT NULL,
+                        PRIMARY KEY (snapshot_date, source)
+                    );
+                    CREATE TABLE position_snapshots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        snapshot_date TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        FOREIGN KEY (snapshot_date, source)
+                            REFERENCES position_snapshot_sources(snapshot_date, source)
+                    );
+                    CREATE INDEX position_snapshots_day_idx
+                        ON position_snapshots(snapshot_date, source);
+
+                    CREATE TRIGGER position_snapshot_sources_no_update
+                    BEFORE UPDATE ON position_snapshot_sources
+                    BEGIN SELECT RAISE(ABORT, 'immutable snapshot'); END;
+                    CREATE TRIGGER position_snapshot_sources_no_delete
+                    BEFORE DELETE ON position_snapshot_sources
+                    BEGIN SELECT RAISE(ABORT, 'immutable snapshot'); END;
+                    CREATE TRIGGER position_snapshots_no_update
+                    BEFORE UPDATE ON position_snapshots
+                    BEGIN SELECT RAISE(ABORT, 'immutable snapshot'); END;
+                    CREATE TRIGGER position_snapshots_no_delete
+                    BEFORE DELETE ON position_snapshots
+                    BEGIN SELECT RAISE(ABORT, 'immutable snapshot'); END;
+
+                    PRAGMA user_version = 2;
+                    """
+                )
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -212,7 +362,7 @@ def _serialize_asset(asset: Asset) -> str:
     输出：紧凑 JSON 字符串；金额保存为十进制文本，标签保存为 JSON 数组。
     """
     payload = asdict(asset)
-    for field_name in DECIMAL_FIELDS:
+    for field_name in ASSET_DECIMAL_FIELDS:
         payload[field_name] = str(payload[field_name])
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
@@ -226,6 +376,28 @@ def _deserialize_asset(payload_json: str) -> Asset:
     payload = json.loads(payload_json)
     payload["tags"] = tuple(payload.get("tags") or ())
     return Asset(**payload)
+
+
+def _serialize_position(position: Position) -> str:
+    """无损序列化合约仓位。
+
+    输入：所有数字已规范为 Decimal 的 ``Position``。
+    输出：紧凑 JSON 字符串；Decimal 保存为十进制文本，可选空值保持 ``null``。
+    """
+    payload = asdict(position)
+    for field_name in POSITION_DECIMAL_FIELDS:
+        value = payload[field_name]
+        payload[field_name] = str(value) if value is not None else None
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _deserialize_position(payload_json: str) -> Position:
+    """从数据库恢复合约仓位。
+
+    输入：由 ``_serialize_position`` 生成的 JSON 字符串。
+    输出：金额和杠杆重新规范为 Decimal 的不可变 ``Position``。
+    """
+    return Position(**json.loads(payload_json))
 
 
 def _snapshot_day(value: str | date | None) -> str:

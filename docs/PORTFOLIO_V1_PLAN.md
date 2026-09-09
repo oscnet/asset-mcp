@@ -48,7 +48,7 @@
 
 - [ ] 实现 OS Keychain 优先、Fernet 文件保险库回退的凭据引用。
 - [ ] YAML 只保存 `credentialRef`，保留旧配置的一次性迁移入口。
-- [ ] 实现 SQLite schema、迁移、当前持仓和每日快照。
+- [x] 实现 SQLite schema、迁移、当前资产/合约仓位和每日不可变快照。
 - [x] 来源失败时保留最后成功资产并标记 `STALE`。
 - [ ] 实现备份与恢复命令。
 
