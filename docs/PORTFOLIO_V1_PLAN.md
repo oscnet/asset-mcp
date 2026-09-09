@@ -21,7 +21,7 @@
 |---|---|---|---|
 | M0 基线与准入 | 09-09 | Fork、Spike、上游基线、开发分支和路线图 | 完成 |
 | M1 精确统一模型 | 09-09～09-11 | Decimal、账户类型/链/位置/价格来源/同步状态，旧 MCP 兼容 | 完成 |
-| M2 合约仓位 | 09-12～09-17 | Binance USD-M、OKX Futures/Perpetual 仓位与未实现盈亏 | 进行中 |
+| M2 合约仓位 | 09-12～09-17 | Binance USD-M、OKX Futures/Perpetual 仓位与未实现盈亏 | 完成 |
 | M3 安全与历史 | 09-18～09-23 | 凭据保险库、SQLite 当前状态、每日幂等快照、STALE | 未开始 |
 | M4 组合计算与 MCP | 09-24～09-28 | allocation、risk、scenario、history 五类确定性查询 | 未开始 |
 | M5 Web V1 与交付 | 09-29～10-05 | Streamlit Dashboard、配置、明细、CSV/JSON、Docker | 未开始 |
@@ -42,7 +42,7 @@
 - [x] 定义只读 `Position` 模型及净/毛敞口所需字段。
 - [x] 接入 Binance USD-M `positionRisk`，解析方向、数量、入场价、标记价、杠杆、清算价、未实现盈亏。
 - [x] 接入 OKX `account/positions`，统一 Futures/Perpetual 字段。
-- [ ] 增加签名、空仓、双向持仓、缺失价格和权限失败契约测试。
+- [x] 增加签名、空仓、双向持仓、缺失价格和权限失败契约测试。
 
 ### M3：安全与历史
 

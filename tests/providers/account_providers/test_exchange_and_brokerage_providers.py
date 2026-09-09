@@ -1,4 +1,5 @@
 import os
+import re
 from decimal import Decimal
 from urllib.parse import urlparse
 
@@ -170,6 +171,32 @@ async def test_okx_fetch_positions_normalizes_swap_and_futures_rows():
     assert positions[1].marginUsd == Decimal("2800")
     assert positions[1].accountType == "okx_futures"
     assert client.calls == ["/api/v5/account/positions"]
+
+
+@pytest.mark.asyncio
+async def test_okx_position_request_is_signed_and_empty_response_is_valid():
+    config = _okx_config()
+    client = _FakeOkxClient({"/api/v5/account/positions": {"code": "0", "data": []}})
+
+    positions = await OkxProvider(config, client=client).fetch_positions()
+
+    assert positions == []
+    request = client.requests[0]
+    assert request["headers"]["OK-ACCESS-KEY"] == "key"
+    assert request["headers"]["OK-ACCESS-PASSPHRASE"] == "pass"
+    assert request["headers"]["OK-ACCESS-SIGN"]
+    assert request["headers"]["OK-ACCESS-TIMESTAMP"].endswith("Z")
+
+
+@pytest.mark.asyncio
+async def test_okx_position_permission_failure_is_not_reported_as_empty():
+    config = _okx_config()
+    client = _FakeOkxClient(
+        {"/api/v5/account/positions": (403, {"code": "50120", "msg": "permission denied"})}
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await OkxProvider(config, client=client).fetch_positions()
 
 
 def test_moomoo_provider_uses_cash_by_real_currency_before_summary_currency():
@@ -542,6 +569,56 @@ async def test_binance_fetch_positions_normalizes_long_short_and_skips_flat_rows
     assert client.calls == [("GET", "fapi.binance.com", "/fapi/v3/positionRisk")]
 
 
+@pytest.mark.asyncio
+async def test_binance_position_request_is_signed_and_supports_hedge_mode():
+    config = _binance_config()
+    client = _FakeBinanceClient(
+        {
+            ("GET", "fapi.binance.com", "/fapi/v3/positionRisk"): [
+                {
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "0.1",
+                    "positionSide": "LONG",
+                    "markPrice": "",
+                    "notional": "6000",
+                },
+                {
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "-0.2",
+                    "positionSide": "SHORT",
+                    "markPrice": "61000",
+                    "notional": "-12200",
+                },
+            ]
+        }
+    )
+
+    positions = await BinanceProvider(config, client=client).fetch_positions()
+
+    assert [position.side for position in positions] == ["long", "short"]
+    assert positions[0].markPriceUsd == 0
+    request = client.requests[0]
+    assert request["headers"] == {"X-MBX-APIKEY": "key"}
+    assert isinstance(request["params"]["timestamp"], int)
+    assert re.fullmatch(r"[0-9a-f]{64}", request["params"]["signature"])
+
+
+@pytest.mark.asyncio
+async def test_binance_position_permission_failure_is_not_reported_as_empty():
+    config = _binance_config()
+    client = _FakeBinanceClient(
+        {
+            ("GET", "fapi.binance.com", "/fapi/v3/positionRisk"): (
+                401,
+                {"code": -2015, "msg": "invalid key or permissions"},
+            )
+        }
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await BinanceProvider(config, client=client).fetch_positions()
+
+
 def _binance_config():
     return parse_config(
         {
@@ -602,33 +679,41 @@ class _FakeBinanceClient:
     def __init__(self, routes):
         self.routes = routes
         self.calls = []
+        self.requests = []
 
-    async def get(self, url, **_kwargs):
-        return self._response("GET", url)
+    async def get(self, url, **kwargs):
+        return self._response("GET", url, kwargs)
 
-    async def post(self, url, **_kwargs):
-        return self._response("POST", url)
+    async def post(self, url, **kwargs):
+        return self._response("POST", url, kwargs)
 
-    def _response(self, method, url):
+    def _response(self, method, url, kwargs):
         parsed = urlparse(url)
         key = (method, parsed.netloc, parsed.path)
         self.calls.append(key)
+        self.requests.append(kwargs)
         if key not in self.routes:
             return _FakeResponse(404, {"code": -1, "msg": "not configured"})
-        return _FakeResponse(200, self.routes[key])
+        route = self.routes[key]
+        status_code, data = route if isinstance(route, tuple) else (200, route)
+        return _FakeResponse(status_code, data)
 
 
 class _FakeOkxClient:
     def __init__(self, routes):
         self.routes = routes
         self.calls = []
+        self.requests = []
 
-    async def get(self, url, **_kwargs):
+    async def get(self, url, **kwargs):
         path = urlparse(url).path
         self.calls.append(path)
+        self.requests.append(kwargs)
         if path not in self.routes:
             return _FakeResponse(404, {"code": "51001", "msg": "not configured"})
-        return _FakeResponse(200, self.routes[path])
+        route = self.routes[path]
+        status_code, data = route if isinstance(route, tuple) else (200, route)
+        return _FakeResponse(status_code, data)
 
 
 class _FakeFlexClient:
