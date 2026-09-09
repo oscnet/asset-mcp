@@ -40,7 +40,7 @@
 ### M2：合约仓位
 
 - [x] 定义只读 `Position` 模型及净/毛敞口所需字段。
-- [ ] 接入 Binance USD-M `positionRisk`，解析方向、数量、入场价、标记价、杠杆、清算价、未实现盈亏。
+- [x] 接入 Binance USD-M `positionRisk`，解析方向、数量、入场价、标记价、杠杆、清算价、未实现盈亏。
 - [ ] 接入 OKX `account/positions`，统一 Futures/Perpetual 字段。
 - [ ] 增加签名、空仓、双向持仓、缺失价格和权限失败契约测试。
 

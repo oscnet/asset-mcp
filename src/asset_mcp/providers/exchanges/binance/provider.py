@@ -10,7 +10,7 @@ from urllib.parse import urlencode
 import httpx
 
 from asset_mcp.config import AppConfig, BinanceAccountConfig
-from asset_mcp.domain.models import AccountStatus, Asset, utc_now_iso
+from asset_mcp.domain.models import AccountStatus, Asset, Position, decimal_amount, utc_now_iso
 from asset_mcp.providers.base import AssetProvider
 
 BINANCE_PRODUCTION_URL = "https://api.binance.com"
@@ -63,6 +63,83 @@ class BinanceProvider(AssetProvider):
                 account_assets, _diagnostics = await self._fetch_account_assets(client, account)
                 assets.extend(account_assets)
         return assets
+
+    async def fetch_positions(self) -> list[Position]:
+        """读取所有启用 Binance 账户的 USD-M 当前仓位。
+
+        输入：Provider 初始化时注入的账户配置和可选 HTTP client；
+        账户必须使用只读 API。
+        输出：统一 ``Position`` 列表，过滤零仓位；数量与名义价值均为绝对值，
+        方向单独存储。
+        """
+        positions: list[Position] = []
+        async with self._client() as client:
+            for account in self.config.binanceAccounts:
+                if not account.enabled:
+                    continue
+                rows = await self._signed_get(
+                    client,
+                    account,
+                    BINANCE_FAPI_URL,
+                    "/fapi/v3/positionRisk",
+                    {},
+                )
+                positions.extend(self._positions_from_risk(account, rows))
+        return positions
+
+    def _positions_from_risk(
+        self,
+        account: BinanceAccountConfig,
+        rows: Any,
+    ) -> list[Position]:
+        """把 Binance USD-M positionRisk 响应标准化。
+
+        输入：单个 Binance 账户配置和 API 返回的仓位数组。
+        输出：非零统一仓位；清算价为零时输出 ``None``，全仓保证金缺失时用
+        ``abs(notional) / leverage`` 估算当前仓位保证金。
+        """
+        positions: list[Position] = []
+        now = utc_now_iso()
+        for row in rows if isinstance(rows, list) else []:
+            amount = decimal_amount(row.get("positionAmt") or 0)
+            if amount == 0:
+                continue
+            instrument = str(row.get("symbol") or "").upper()
+            mark_price = decimal_amount(row.get("markPrice") or 0)
+            notional = abs(decimal_amount(row.get("notional") or amount * mark_price))
+            leverage = decimal_amount(row.get("leverage") or 0)
+            isolated_margin = abs(decimal_amount(row.get("isolatedMargin") or 0))
+            margin = isolated_margin if isolated_margin > 0 else None
+            if margin is None and leverage > 0:
+                margin = notional / leverage
+            liquidation_price = decimal_amount(row.get("liquidationPrice") or 0)
+            position_side = str(row.get("positionSide") or "BOTH").upper()
+            is_long = position_side == "LONG" or (
+                position_side == "BOTH" and amount > 0
+            )
+            side = "long" if is_long else "short"
+            positions.append(
+                Position(
+                    source="binance",
+                    accountId=account.id,
+                    accountLabel=account.label,
+                    symbol=_base_symbol(instrument),
+                    instrument=instrument,
+                    side=side,
+                    quantity=abs(amount),
+                    entryPriceUsd=row.get("entryPrice") or 0,
+                    markPriceUsd=mark_price,
+                    notionalUsd=notional,
+                    unrealizedPnlUsd=row.get("unRealizedProfit") or 0,
+                    leverage=leverage,
+                    liquidationPriceUsd=liquidation_price if liquidation_price > 0 else None,
+                    marginUsd=margin,
+                    accountType="um_futures",
+                    updatedAt=now,
+                    rawSource="um_futures_position_risk",
+                )
+            )
+        return positions
 
     async def health_check(self) -> list[AccountStatus]:
         statuses: list[AccountStatus] = []
@@ -738,6 +815,13 @@ def _price_for_symbol(symbol: str, prices: dict[str, float]) -> float:
 
 def _has_symbol(assets: list[Asset], symbol: str) -> bool:
     return any(asset.symbol == symbol for asset in assets)
+
+
+def _base_symbol(instrument: str) -> str:
+    for quote in ("FDUSD", "USDT", "USDC", "BUSD"):
+        if instrument.endswith(quote):
+            return instrument.removesuffix(quote)
+    return instrument
 
 
 def _wallet_slug(wallet_name: str) -> str:

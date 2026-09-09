@@ -432,6 +432,58 @@ async def test_binance_optional_endpoint_failures_still_return_spot_assets():
     assert assets[0].wallet == "spot"
 
 
+@pytest.mark.asyncio
+async def test_binance_fetch_positions_normalizes_long_short_and_skips_flat_rows():
+    config = _binance_config()
+    client = _FakeBinanceClient(
+        {
+            ("GET", "fapi.binance.com", "/fapi/v3/positionRisk"): [
+                {
+                    "symbol": "BTCUSDT",
+                    "positionAmt": "0.5",
+                    "entryPrice": "60000",
+                    "markPrice": "62000",
+                    "notional": "31000",
+                    "unRealizedProfit": "1000",
+                    "liquidationPrice": "45000",
+                    "leverage": "3",
+                    "isolatedMargin": "10000",
+                    "positionSide": "BOTH",
+                },
+                {
+                    "symbol": "ETHUSDT",
+                    "positionAmt": "-2",
+                    "entryPrice": "3000",
+                    "markPrice": "2800",
+                    "notional": "-5600",
+                    "unRealizedProfit": "400",
+                    "liquidationPrice": "0",
+                    "leverage": "2",
+                    "isolatedMargin": "0",
+                    "positionSide": "BOTH",
+                },
+                {"symbol": "SOLUSDT", "positionAmt": "0"},
+            ]
+        }
+    )
+
+    positions = await BinanceProvider(config, client=client).fetch_positions()
+
+    assert len(positions) == 2
+    assert positions[0].symbol == "BTC"
+    assert positions[0].side == "long"
+    assert positions[0].quantity == Decimal("0.5")
+    assert positions[0].notionalUsd == Decimal("31000")
+    assert positions[0].marginUsd == Decimal("10000")
+    assert positions[1].symbol == "ETH"
+    assert positions[1].side == "short"
+    assert positions[1].quantity == Decimal("2")
+    assert positions[1].notionalUsd == Decimal("5600")
+    assert positions[1].liquidationPriceUsd is None
+    assert positions[1].marginUsd == Decimal("2800")
+    assert client.calls == [("GET", "fapi.binance.com", "/fapi/v3/positionRisk")]
+
+
 def _binance_config():
     return parse_config(
         {
