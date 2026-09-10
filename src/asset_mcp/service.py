@@ -23,6 +23,7 @@ from asset_mcp.providers.registry import PROVIDER_FACTORIES, build_provider_entr
 from asset_mcp.storage import PortfolioStore, default_database_path
 
 DEFAULT_PROVIDER_TIMEOUT_SECONDS = 20.0
+DEFAULT_ONCHAIN_PROVIDER_TIMEOUT_SECONDS = 90.0
 PROCESS_ISOLATED_SOURCES = {"longbridge", "moomoo"}
 
 
@@ -362,20 +363,35 @@ class AssetService:
         config: AppConfig,
         action: str,
     ) -> _ProviderActionResult:
+        timeout_seconds = self._provider_timeout_for_source(source)
         if source in PROCESS_ISOLATED_SOURCES:
             return await asyncio.to_thread(
                 _run_provider_action_in_process,
                 source,
                 config,
                 action,
-                self.provider_timeout_seconds,
+                timeout_seconds,
             )
         return await _run_provider_action_in_thread(
             source,
             provider,
             action,
-            self.provider_timeout_seconds,
+            timeout_seconds,
         )
+
+    def _provider_timeout_for_source(self, source: str) -> float:
+        """返回指定资产来源单次操作的超时秒数。
+
+        输入：Provider 来源名称，例如 ``onchain``、``binance`` 或 ``okx``。
+        输出：显式传入的自定义超时；使用系统默认值时，链上来源返回 90 秒以容纳
+        EVM 节流和 429 退避，其他来源仍返回默认的 20 秒。
+        """
+        if (
+            source == "onchain"
+            and self.provider_timeout_seconds == DEFAULT_PROVIDER_TIMEOUT_SECONDS
+        ):
+            return DEFAULT_ONCHAIN_PROVIDER_TIMEOUT_SECONDS
+        return self.provider_timeout_seconds
 
     def _config(self) -> AppConfig:
         return self.config if self.config is not None else load_config()

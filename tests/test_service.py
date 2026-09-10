@@ -12,6 +12,16 @@ from asset_mcp.service import AssetService
 from asset_mcp.storage import PortfolioStore
 
 
+def test_onchain_uses_longer_default_timeout_without_changing_custom_timeout():
+    """输入默认与自定义 Provider 超时；输出仅默认 onchain 扩展到 90 秒。"""
+    default_service = AssetService(AppConfig(), store=None)
+    custom_service = AssetService(AppConfig(), provider_timeout_seconds=0.01, store=None)
+
+    assert default_service._provider_timeout_for_source("onchain") == 90
+    assert default_service._provider_timeout_for_source("binance") == 20
+    assert custom_service._provider_timeout_for_source("onchain") == 0.01
+
+
 @pytest.mark.asyncio
 async def test_net_worth_returns_partial_result_when_provider_times_out(monkeypatch):
     monkeypatch.setattr(

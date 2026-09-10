@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Awaitable, Callable
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -15,6 +18,10 @@ JUPITER_PRICE_URL = "https://api.jup.ag/price/v3"
 SOLANA_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 SOLANA_TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFsc9WtZb7u9fKjffNb"
 STABLE_USD_SYMBOLS = {"USD", "USDT", "USDC", "DAI", "BUSD", "FDUSD"}
+DEFAULT_EVM_MIN_INTERVAL_SECONDS = 0.1
+DEFAULT_EVM_MAX_RETRIES = 3
+DEFAULT_EVM_RETRY_BASE_SECONDS = 0.5
+MAX_RETRY_AFTER_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -228,9 +235,34 @@ COMMON_EVM_TOKENS = {
 
 
 class OnchainProvider(AssetProvider):
-    def __init__(self, config: AppConfig, client: httpx.AsyncClient | None = None):
+    def __init__(
+        self,
+        config: AppConfig,
+        client: httpx.AsyncClient | None = None,
+        *,
+        evm_min_interval_seconds: float = DEFAULT_EVM_MIN_INTERVAL_SECONDS,
+        evm_max_retries: int = DEFAULT_EVM_MAX_RETRIES,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ):
+        """创建只读链上资产 Provider。
+
+        输入：应用配置、可选 HTTP client，以及 EVM 同主机最小请求间隔、429 最大重试数、
+        可注入的异步等待函数和单调时钟；注入项用于无真实等待的确定性测试。
+        输出：可读取 BTC、EVM、Solana、TRON 资产的 Provider；EVM JSON-RPC 请求按主机
+        节流，429 遵循 Retry-After 或指数退避，其他 HTTP 错误立即上抛。
+        """
+        if evm_min_interval_seconds < 0:
+            raise ValueError("evm_min_interval_seconds must not be negative")
+        if evm_max_retries < 0:
+            raise ValueError("evm_max_retries must not be negative")
         self.config = config
         self.client = client
+        self.evm_min_interval_seconds = float(evm_min_interval_seconds)
+        self.evm_max_retries = int(evm_max_retries)
+        self._sleep = sleep
+        self._clock = clock
+        self._last_evm_request_at: dict[str, float] = {}
 
     async def fetch_assets(self) -> list[Asset]:
         assets: list[Asset] = []
@@ -703,17 +735,47 @@ class OnchainProvider(AssetProvider):
         method: str,
         params: list[Any],
     ) -> dict[str, Any]:
-        response = await client.post(
-            url,
-            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-        )
-        response.raise_for_status()
+        """发送受节流和有限重试保护的 EVM JSON-RPC 请求。
+
+        输入：HTTP client、RPC URL、方法名及参数列表。
+        输出：成功的 JSON-RPC 字典；同一主机请求至少间隔配置秒数。HTTP 429 最多重试
+        配置次数并遵守 Retry-After，其他 HTTP、非法 JSON 或 RPC 错误直接抛出。
+        """
+        response = None
+        for attempt in range(self.evm_max_retries + 1):
+            await self._throttle_evm_request(url)
+            response = await client.post(
+                url,
+                json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+            )
+            try:
+                response.raise_for_status()
+                break
+            except httpx.HTTPStatusError:
+                if response.status_code != 429 or attempt >= self.evm_max_retries:
+                    raise
+                await self._sleep(_retry_delay_seconds(response, attempt))
+        assert response is not None
         data = response.json()
         if not isinstance(data, dict):
             raise ValueError("Invalid JSON-RPC response.")
         if data.get("error"):
             raise ValueError("JSON-RPC error.")
         return data
+
+    async def _throttle_evm_request(self, url: str) -> None:
+        """限制同一 EVM RPC 主机的连续请求速率。
+
+        输入：即将访问的 RPC URL，并读取 Provider 保存的该主机上次请求时刻。
+        输出：需要时异步等待剩余间隔，随后记录本次请求时刻；不同主机互不阻塞。
+        """
+        host = urlsplit(url).netloc.lower()
+        previous = self._last_evm_request_at.get(host)
+        if previous is not None:
+            remaining = self.evm_min_interval_seconds - (self._clock() - previous)
+            if remaining > 0:
+                await self._sleep(remaining)
+        self._last_evm_request_at[host] = self._clock()
 
     def _client(self):
         if self.client is not None:
@@ -877,6 +939,25 @@ def _float(value: Any) -> float:
         return float(value or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _retry_delay_seconds(response: Any, attempt: int) -> float:
+    """计算 HTTP 429 的安全等待时间。
+
+    输入：包含可选 ``Retry-After`` 响应头的 HTTP 响应，以及从零开始的重试序号。
+    输出：有效数字响应头优先并限制在 0～30 秒；缺失或非法时返回 0.5、1、2…秒的
+    指数退避，同样不超过 30 秒。
+    """
+    retry_after = getattr(response, "headers", {}).get("Retry-After")
+    if retry_after is not None:
+        try:
+            return min(max(float(retry_after), 0.0), MAX_RETRY_AFTER_SECONDS)
+        except (TypeError, ValueError):
+            pass
+    return min(
+        DEFAULT_EVM_RETRY_BASE_SECONDS * (2**attempt),
+        MAX_RETRY_AFTER_SECONDS,
+    )
 
 
 def _int_from_hex(value: Any) -> int:

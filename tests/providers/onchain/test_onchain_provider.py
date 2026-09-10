@@ -136,9 +136,10 @@ async def test_onchain_health_check_reports_unsupported_chain():
 
 
 class _FakeResponse:
-    def __init__(self, status_code, data):
+    def __init__(self, status_code, data, headers=None):
         self.status_code = status_code
         self._data = data
+        self.headers = dict(headers or {})
 
     def json(self):
         return self._data
@@ -219,6 +220,7 @@ class _FakeOnchainClient:
         return _FakeResponse(404, {})
 
     async def post(self, url, **kwargs):
+        """输入模拟 RPC URL 与 JSON 请求；输出对应链和方法的固定测试响应。"""
         parsed = urlparse(url)
         payload = kwargs.get("json", {})
         if parsed.netloc == "api.mainnet-beta.solana.com":
@@ -267,3 +269,131 @@ class _FakeOnchainClient:
                     return _FakeResponse(200, {"result": hex(7 * 10**18)})
                 return _FakeResponse(200, {"result": "0x0"})
         return _FakeResponse(404, {})
+
+
+@pytest.mark.asyncio
+async def test_evm_rpc_throttles_consecutive_requests_to_same_host():
+    """输入同一 EVM RPC 的连续请求；输出第二次请求前等待剩余最小间隔。"""
+    clock = _FakeClock()
+    client = _SequencedRpcClient([_FakeResponse(200, {"result": "0x0"})] * 2, clock)
+    provider = OnchainProvider(
+        parse_config({}),
+        client=client,
+        evm_min_interval_seconds=0.1,
+        sleep=clock.sleep,
+        clock=clock,
+    )
+
+    await provider._json_rpc(client, "https://rpc.example.test", "eth_getBalance", [])
+    await provider._json_rpc(client, "https://rpc.example.test", "eth_getBalance", [])
+
+    assert client.request_times == [0.0, 0.1]
+    assert clock.sleeps == [pytest.approx(0.1)]
+
+
+@pytest.mark.asyncio
+async def test_evm_rpc_retries_429_and_honors_retry_after():
+    """输入一次带 Retry-After 的 429 后成功响应；输出等待指定秒数并返回成功数据。"""
+    clock = _FakeClock()
+    client = _SequencedRpcClient(
+        [
+            _FakeResponse(429, {}, {"Retry-After": "0.25"}),
+            _FakeResponse(200, {"result": "0x2a"}),
+        ],
+        clock,
+    )
+    provider = OnchainProvider(
+        parse_config({}),
+        client=client,
+        evm_min_interval_seconds=0.1,
+        sleep=clock.sleep,
+        clock=clock,
+    )
+
+    result = await provider._json_rpc(
+        client,
+        "https://rpc.example.test",
+        "eth_getBalance",
+        [],
+    )
+
+    assert result == {"result": "0x2a"}
+    assert len(client.request_times) == 2
+    assert clock.sleeps == [pytest.approx(0.25)]
+
+
+@pytest.mark.asyncio
+async def test_evm_rpc_uses_bounded_exponential_backoff_then_raises():
+    """输入持续 429；输出 0.5/1/2 秒退避三次，第四次失败后停止重试。"""
+    clock = _FakeClock()
+    client = _SequencedRpcClient([_FakeResponse(429, {})] * 4, clock)
+    provider = OnchainProvider(
+        parse_config({}),
+        client=client,
+        evm_min_interval_seconds=0,
+        evm_max_retries=3,
+        sleep=clock.sleep,
+        clock=clock,
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await provider._json_rpc(
+            client,
+            "https://rpc.example.test",
+            "eth_getBalance",
+            [],
+        )
+
+    assert len(client.request_times) == 4
+    assert clock.sleeps == [0.5, 1.0, 2.0]
+
+
+@pytest.mark.asyncio
+async def test_evm_rpc_does_not_retry_non_rate_limit_http_errors():
+    """输入 HTTP 403；输出立即抛出且不睡眠、不重试。"""
+    clock = _FakeClock()
+    client = _SequencedRpcClient([_FakeResponse(403, {})], clock)
+    provider = OnchainProvider(
+        parse_config({}),
+        client=client,
+        sleep=clock.sleep,
+        clock=clock,
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await provider._json_rpc(
+            client,
+            "https://rpc.example.test",
+            "eth_getBalance",
+            [],
+        )
+
+    assert len(client.request_times) == 1
+    assert clock.sleeps == []
+
+
+class _FakeClock:
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def __call__(self):
+        """输入无；输出当前模拟单调时钟秒数。"""
+        return self.now
+
+    async def sleep(self, seconds):
+        """输入等待秒数；输出无，并推进模拟时钟供节流测试断言。"""
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+class _SequencedRpcClient:
+    def __init__(self, responses, clock):
+        self.responses = list(responses)
+        self.clock = clock
+        self.request_times = []
+
+    async def post(self, _url, **_kwargs):
+        """输入 RPC URL 与请求参数；输出预置响应并记录请求发生时刻。"""
+        self.request_times.append(self.clock())
+        return self.responses.pop(0)
