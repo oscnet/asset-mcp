@@ -159,6 +159,60 @@ async def test_failed_provider_without_cache_does_not_invent_zero_asset(monkeypa
     assert result["providerErrors"][0]["source"] == "ibkr"
 
 
+@pytest.mark.asyncio
+async def test_onchain_zero_price_reuses_last_known_price_as_stale(monkeypatch, tmp_path):
+    """输入实时余额更新但价格为零及旧缓存价格；输出按新数量重新估值并标记 STALE。"""
+    store = PortfolioStore(tmp_path / "portfolio.db")
+    store.replace_current_assets(
+        "onchain",
+        [_onchain_asset(quantity=1, unit_price=2000, value_usd=2000)],
+    )
+    monkeypatch.setattr(
+        service_module,
+        "build_provider_entries",
+        lambda config, source=None: [
+            ("onchain", _StaticProvider([_onchain_asset(quantity=2, unit_price=0, value_usd=0)]))
+        ],
+    )
+
+    result = await AssetService(AppConfig(), store=store).get_assets_payload(source="onchain")
+
+    asset = result["assets"][0]
+    assert result["ok"] is True
+    assert result["partial"] is True
+    assert asset["quantity"] == 2
+    assert asset["unitPriceUsd"] == 2000
+    assert asset["valueUsd"] == 4000
+    assert asset["syncStatus"] == "STALE"
+    assert asset["priceSource"] == "cached:onchain"
+    assert store.load_current_assets("onchain")[0].syncStatus == "STALE"
+    assert store.load_snapshot(datetime.now(timezone.utc).date().isoformat()) == []
+
+
+@pytest.mark.asyncio
+async def test_onchain_unknown_zero_price_is_error_and_not_snapshotted(monkeypatch, tmp_path):
+    """输入首次出现且无历史价格的链上资产；输出保留数量、标记 ERROR 且不写每日快照。"""
+    store = PortfolioStore(tmp_path / "portfolio.db")
+    monkeypatch.setattr(
+        service_module,
+        "build_provider_entries",
+        lambda config, source=None: [
+            ("onchain", _StaticProvider([_onchain_asset(quantity=3, unit_price=0, value_usd=0)]))
+        ],
+    )
+
+    result = await AssetService(AppConfig(), store=store).get_assets_payload(source="onchain")
+
+    asset = result["assets"][0]
+    assert result["ok"] is True
+    assert result["partial"] is True
+    assert asset["quantity"] == 3
+    assert asset["unitPriceUsd"] == 0
+    assert asset["syncStatus"] == "ERROR"
+    assert asset["priceSource"] == "unavailable"
+    assert store.load_snapshot(datetime.now(timezone.utc).date().isoformat()) == []
+
+
 def test_service_uses_default_store_for_normal_runtime(monkeypatch, tmp_path):
     database_path = tmp_path / "portfolio.db"
     monkeypatch.setenv("ASSET_MCP_DATABASE", str(database_path))
@@ -333,6 +387,39 @@ class _FastProvider:
 
     async def health_check(self) -> list[AccountStatus]:
         return [AccountStatus("manual", "manual-main", "Manual", True, True, "ok")]
+
+
+class _StaticProvider:
+    def __init__(self, assets: list[Asset]):
+        """输入固定资产列表；输出供 Service 持久化测试使用的静态 Provider。"""
+        self.assets = assets
+
+    async def fetch_assets(self) -> list[Asset]:
+        """输入无；输出构造器保存的资产副本。"""
+        return list(self.assets)
+
+    async def health_check(self) -> list[AccountStatus]:
+        """输入无；输出单个健康的链上测试账户状态。"""
+        return [AccountStatus("onchain", "wallet-main", "Wallet", True, True, "ok")]
+
+
+def _onchain_asset(quantity: int, unit_price: int, value_usd: int) -> Asset:
+    """输入数量、美元单价和美元价值；输出具有稳定缓存匹配键的 ETH 测试资产。"""
+    return Asset(
+        source="onchain",
+        accountId="wallet-main",
+        accountLabel="Wallet",
+        category="crypto",
+        symbol="ETH",
+        quantity=quantity,
+        currency="ETH",
+        unitPriceUsd=unit_price,
+        valueUsd=value_usd,
+        updatedAt="2026-09-10T00:00:00Z",
+        rawSource="onchain_native_balance",
+        wallet="ethereum:0x0000...0001",
+        chain="ethereum",
+    )
 
 
 class _BlockingProvider:

@@ -58,7 +58,9 @@ class _FetchAssetsResult:
 
     @property
     def partial(self) -> bool:
-        return bool(self.provider_errors)
+        return bool(self.provider_errors) or any(
+            asset.syncStatus != "FRESH" for asset in self.assets
+        )
 
 
 @dataclass(frozen=True)
@@ -68,7 +70,9 @@ class _FetchPositionsResult:
 
     @property
     def partial(self) -> bool:
-        return bool(self.provider_errors)
+        return bool(self.provider_errors) or any(
+            position.syncStatus != "FRESH" for position in self.positions
+        )
 
 
 @dataclass(frozen=True)
@@ -161,7 +165,7 @@ class AssetService:
         payload = build_risk(asset_result.assets, position_result.positions)
         errors = [*asset_result.provider_errors, *position_result.provider_errors]
         payload["ok"] = not errors
-        payload["partial"] = bool(errors)
+        payload["partial"] = asset_result.partial or position_result.partial
         payload["providerErrors"] = [error.to_dict() for error in errors]
         return payload
 
@@ -180,14 +184,14 @@ class AssetService:
         risk = build_risk(asset_result.assets, position_result.positions)
         errors = [*asset_result.provider_errors, *position_result.provider_errors]
         risk["ok"] = not errors
-        risk["partial"] = bool(errors)
+        risk["partial"] = asset_result.partial or position_result.partial
         risk["providerErrors"] = [error.to_dict() for error in errors]
         return {
             "dashboard": dashboard,
             "risk": risk,
             "assets": [asset.to_dict() for asset in asset_result.assets],
             "ok": not errors,
-            "partial": bool(errors),
+            "partial": asset_result.partial or position_result.partial,
             "providerErrors": [error.to_dict() for error in errors],
         }
 
@@ -206,7 +210,7 @@ class AssetService:
         )
         errors = [*asset_result.provider_errors, *position_result.provider_errors]
         payload["ok"] = not errors
-        payload["partial"] = bool(errors)
+        payload["partial"] = asset_result.partial or position_result.partial
         payload["providerErrors"] = [error.to_dict() for error in errors]
         return payload
 
@@ -298,10 +302,22 @@ class AssetService:
                         )
                     )
             else:
-                assets.extend(result.items)
+                current_items = result.items
+                if result.source == "onchain":
+                    cached_items = (
+                        self.store.load_current_assets(source="onchain")
+                        if self.store is not None
+                        else []
+                    )
+                    current_items = _reuse_last_known_onchain_prices(
+                        current_items,
+                        cached_items,
+                    )
+                assets.extend(current_items)
                 if self.store is not None:
-                    self.store.replace_current_assets(result.source, result.items)
-                    self.store.save_daily_snapshot(result.source, result.items)
+                    self.store.replace_current_assets(result.source, current_items)
+                    if all(item.syncStatus == "FRESH" for item in current_items):
+                        self.store.save_daily_snapshot(result.source, current_items)
         return _FetchAssetsResult(
             assets=_with_configured_tags(assets, config),
             provider_errors=provider_errors,
@@ -541,6 +557,70 @@ def _with_fetch_status(
     payload["partial"] = result.partial
     payload["providerErrors"] = [error.to_dict() for error in result.provider_errors]
     return payload
+
+
+def _reuse_last_known_onchain_prices(
+    current_assets: list[Asset],
+    cached_assets: list[Asset],
+) -> list[Asset]:
+    """为缺失实时价格的链上余额恢复上次有效单价。
+
+    输入：本轮 Provider 返回的链上资产，以及 SQLite 保存的上一轮链上资产。匹配键由
+    来源、账户、链、钱包、资产代码和原始数据源组成，避免跨钱包或跨链误用价格。
+    输出：实时价格存在时原样返回；匹配到正数历史单价时按本轮数量重新计算美元价值，
+    标记 ``STALE`` 和缓存价格来源；没有历史价格时保留余额并标记 ``ERROR``，防止零价
+    被误认为正常估值。两个输入列表和其中的不可变资产对象均不会被修改。
+    """
+    cached_by_key = {
+        _onchain_price_key(asset): asset
+        for asset in cached_assets
+        if asset.unitPriceUsd > 0
+    }
+    restored: list[Asset] = []
+    for asset in current_assets:
+        if asset.unitPriceUsd > 0:
+            restored.append(asset)
+            continue
+        previous = cached_by_key.get(_onchain_price_key(asset))
+        if previous is None:
+            restored.append(
+                replace(
+                    asset,
+                    priceSource="unavailable",
+                    syncStatus="ERROR",
+                )
+            )
+            continue
+        original_price_source = (previous.priceSource or "onchain").removeprefix("cached:")
+        restored.append(
+            replace(
+                asset,
+                unitPriceUsd=previous.unitPriceUsd,
+                valueUsd=round(asset.quantity * previous.unitPriceUsd, 8),
+                priceSource=f"cached:{original_price_source}",
+                syncStatus="STALE",
+            )
+        )
+    return restored
+
+
+def _onchain_price_key(
+    asset: Asset,
+) -> tuple[str, str, str | None, str | None, str, str | None]:
+    """生成链上历史价格的保守匹配键。
+
+    输入：一个标准化 ``Asset``。
+    输出：账户、链、钱包、资产代码和原始数据源组成的元组；只有这些定位字段完全一致
+    时才允许复用旧价格。
+    """
+    return (
+        asset.source,
+        asset.accountId,
+        asset.chain,
+        asset.wallet,
+        asset.symbol.upper(),
+        asset.rawSource,
+    )
 
 
 def _with_configured_tags(assets: list[Asset], config: AppConfig) -> list[Asset]:
