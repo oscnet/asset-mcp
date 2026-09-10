@@ -25,7 +25,7 @@
 | M3 安全与历史 | 09-18～09-23 | 凭据保险库、SQLite 当前状态、每日幂等快照、STALE | 完成 |
 | M4 组合计算与 MCP | 09-24～09-28 | allocation、risk、scenario、history 五类确定性查询 | 完成 |
 | M5 Web V1 与交付 | 09-29～10-05 | Streamlit Dashboard、配置、明细、CSV/JSON、Docker | 已完成 |
-| M6 真实账户验收 | 10-06～10-08 | Binance/OKX/BTC/EVM/Solana 对账，金额覆盖率 ≥90% | 需 Oscar 本地参与 |
+| M6 真实账户验收 | 10-06～10-08 | Binance/OKX/BTC/EVM/Solana 对账，金额覆盖率 ≥90% | 进行中：Binance/EVM/Solana 健康 |
 
 ## 4. 可执行任务
 
@@ -71,11 +71,14 @@
 
 ### M6：真实账户验收
 
-- [ ] Oscar 在本地录入只读凭据，不通过聊天或 Git 传递。
+- [x] Oscar 在本地录入现有 Binance 只读凭据，不通过聊天或 Git 传递。
 - [ ] 与 Binance、OKX 官方页面及第二实现交叉核对。
 - [ ] 验证 BTC、EVM、Solana 各至少一个地址。
 - [ ] 总金额覆盖率达到 90%，核心账户类型不得缺失。
 - [ ] 故障演练确认旧值显示为 STALE 而不是零。
+
+当前脱敏实测：2 个 Binance 账户与 17 个链上账户健康，EVM 和 Solana 可读取；配置中
+尚无 OKX 与 Bitcoin，且官方页面美元合计尚未录入，因此不能完成最终金额验收。
 
 ## 5. 关键依赖路径
 

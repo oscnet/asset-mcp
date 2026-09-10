@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import shutil
 import sys
@@ -12,9 +13,15 @@ from typing import Sequence
 import yaml
 
 from asset_mcp import __version__
+from asset_mcp.acceptance import (
+    DEFAULT_REQUIRED_CHAINS,
+    DEFAULT_REQUIRED_SOURCES,
+    evaluate_acceptance,
+)
 from asset_mcp.config import default_config_path, default_user_config_path
 from asset_mcp.security import default_credential_vault, migrate_inline_credentials
 from asset_mcp.server import main as server_main
+from asset_mcp.service import AssetService
 from asset_mcp.storage import PortfolioStore, default_database_path
 
 TEMPLATE_PACKAGE = "asset_mcp.templates"
@@ -116,6 +123,34 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     credential_parser.set_defaults(handler=_handle_set_credential)
 
+    verify_parser = subparsers.add_parser(
+        "verify",
+        help="run live source and portfolio acceptance checks",
+    )
+    verify_parser.add_argument(
+        "--expected-total-usd",
+        required=True,
+        help="official total USD value used for reconciliation",
+    )
+    verify_parser.add_argument(
+        "--minimum-coverage-percent",
+        default="90",
+        help="minimum symmetric amount coverage; defaults to 90",
+    )
+    verify_parser.add_argument(
+        "--required-source",
+        action="append",
+        default=None,
+        help="healthy source required for acceptance; repeatable",
+    )
+    verify_parser.add_argument(
+        "--required-chain",
+        action="append",
+        default=None,
+        help="asset-bearing chain required for acceptance; repeatable",
+    )
+    verify_parser.set_defaults(handler=_handle_verify)
+
     parser.set_defaults(handler=_handle_serve)
     return parser
 
@@ -214,6 +249,40 @@ def _handle_set_credential(args: argparse.Namespace) -> int:
     fields = ", ".join(sorted(secrets))
     print(f"Stored credential: {args.reference} ({fields})")
     return 0
+
+
+def _handle_verify(args: argparse.Namespace) -> int:
+    """运行真实账户验收并输出脱敏 JSON。
+
+    输入：官方总额、最低覆盖率，以及可重复指定的必需来源和链；未指定维度时使用
+    M6 的 Binance、OKX、Bitcoin、Ethereum、Solana 默认目标。
+    输出：stdout 打印稳定 JSON 报告；全部检查通过返回 0，否则返回 1，不输出凭据、
+    地址、账户标识或单项资产金额。
+    """
+    health, overview = asyncio.run(_collect_acceptance_inputs())
+    report = evaluate_acceptance(
+        health,
+        overview,
+        args.expected_total_usd,
+        required_sources=args.required_source or DEFAULT_REQUIRED_SOURCES,
+        required_chains=args.required_chain or DEFAULT_REQUIRED_CHAINS,
+        minimum_coverage_percent=args.minimum_coverage_percent,
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if report["passed"] else 1
+
+
+async def _collect_acceptance_inputs() -> tuple[dict[str, object], dict[str, object]]:
+    """从真实 Provider 收集验收输入。
+
+    输入：当前环境解析出的 Asset MCP 配置、凭据保险库和 SQLite 缓存。
+    输出：数据源健康响应及一次 Portfolio overview 响应；调用严格只读外部账户，但成功
+    数据会按现有 Service 契约更新本地缓存和当日快照。
+    """
+    service = AssetService()
+    health = await service.health_check_sources()
+    overview = await service.get_portfolio_overview()
+    return health, overview
 
 
 def init_config(path: str | Path | None = None, *, force: bool = False) -> "InitConfigResult":

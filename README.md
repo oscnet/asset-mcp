@@ -118,6 +118,21 @@ If you do not need moomoo or Longbridge support, omit those optional extras:
 uv sync --extra dev
 ```
 
+### Run the Web Dashboard directly
+
+Docker is not required for development or local use. Put the config, database,
+encrypted vault, and master-password-file paths in the git-ignored `.env`, then run:
+
+```bash
+set -a
+source .env
+set +a
+uv run asset-mcp-web --server.address=127.0.0.1
+```
+
+Open `http://127.0.0.1:8501`. Keep the explicit loopback binding unless authentication
+and HTTPS have been added.
+
 Install and run the optional local Web dashboard:
 
 ```bash
@@ -394,6 +409,22 @@ To use another path:
 ```bash
 ASSET_MCP_CONFIG=/path/to/config.local.yaml asset-mcp
 ```
+
+## Live account acceptance
+
+Use the combined USD value shown by the official exchange and wallet views as the
+reconciliation baseline:
+
+```bash
+asset-mcp verify --expected-total-usd 100000
+```
+
+By default, Binance and OKX must be healthy, Bitcoin, Ethereum, and Solana must carry
+assets, all rows must be fresh, and symmetric amount coverage must be at least 90%.
+Repeat `--required-source` or `--required-chain` to declare a smaller deployment scope.
+The JSON report omits credentials, account identifiers, and wallet addresses, but includes
+portfolio totals. Exit status is `0` only when every check passes. Always enter an independent
+official total; reusing Asset MCP's own calculated total would make the amount check meaningless.
 
 ## MCP Client Configuration
 

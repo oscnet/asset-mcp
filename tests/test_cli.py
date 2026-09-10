@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 from pathlib import Path
 
 import pytest
@@ -187,6 +188,36 @@ def test_set_credential_reads_json_from_stdin_without_echoing_values(monkeypatch
     assert "apiKey, apiSecret" in output
     assert "visible-key" not in output
     assert "visible-secret" not in output
+
+
+def test_verify_prints_acceptance_json_and_uses_exit_code(monkeypatch, capsys):
+    """输入官方总额和必需来源/链；输出验收 JSON，并以失败状态返回退出码 1。"""
+    async def fake_inputs():
+        """输入无；输出 CLI 验收测试使用的健康状态和空 Portfolio。"""
+        return ({"ok": False, "accounts": []}, {"ok": False, "assets": []})
+
+    monkeypatch.setattr(cli, "_collect_acceptance_inputs", fake_inputs)
+
+    result = cli.main(
+        [
+            "verify",
+            "--expected-total-usd",
+            "1000",
+            "--required-source",
+            "binance",
+            "--required-chain",
+            "bitcoin",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert result == 1
+    assert payload["passed"] is False
+    assert payload["expectedTotalUsd"] == 1000
+    assert {check["id"] for check in payload["checks"]} >= {
+        "source:binance",
+        "chain:bitcoin",
+    }
 
 
 def _manual_asset(symbol: str, value_usd: int) -> Asset:

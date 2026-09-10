@@ -111,6 +111,21 @@ uv run asset-mcp init --path config.local.yaml
 uv sync --extra dev
 ```
 
+### 直接运行 Web Dashboard
+
+开发和本机使用时不需要 Docker。把配置、数据库、加密保险库及主密码文件路径写入
+不会提交到 Git 的 `.env`，然后在项目目录运行：
+
+```bash
+set -a
+source .env
+set +a
+uv run asset-mcp-web --server.address=127.0.0.1
+```
+
+浏览器访问 `http://127.0.0.1:8501`。必须显式绑定 `127.0.0.1`；在没有认证和 HTTPS
+时不要监听公网或局域网地址。
+
 ## Docker 部署
 
 ```bash
@@ -343,6 +358,30 @@ asset-mcp
 ```bash
 ASSET_MCP_CONFIG=/path/to/config.local.yaml asset-mcp
 ```
+
+## 真实账户验收
+
+使用交易所或钱包官方页面显示的美元合计作为基准，运行脱敏验收：
+
+```bash
+asset-mcp verify --expected-total-usd 100000
+```
+
+默认要求 Binance、OKX 健康，Bitcoin、Ethereum、Solana 均存在资产，且聚合金额与
+官方合计的对称覆盖率不低于 90%。如果当前部署范围较小，可重复传入参数明确本次范围：
+
+```bash
+asset-mcp verify \
+  --expected-total-usd 100000 \
+  --required-source binance \
+  --required-source onchain \
+  --required-chain ethereum \
+  --required-chain solana
+```
+
+命令输出 JSON，不包含账户标识、钱包地址或凭据；报告包含聚合总额。全部检查通过时
+退出码为 `0`，任一来源、链、新鲜度或金额覆盖率检查失败时退出码为 `1`。官方总额必须
+由用户本地输入，不能用程序计算出的聚合总额代替，否则金额覆盖率检查没有意义。
 
 ## MCP 客户端配置
 
