@@ -10,7 +10,7 @@ import httpx
 
 from asset_mcp.config import AppConfig, OnchainAccountConfig, OnchainAddressConfig
 from asset_mcp.domain.models import AccountStatus, Asset, utc_now_iso
-from asset_mcp.providers.base import AssetProvider
+from asset_mcp.providers.base import AssetProvider, AssetScope, PartialAssetFetchError
 
 
 COINGECKO_PRICE_URL = "https://api.coingecko.com/api/v3/simple/price"
@@ -284,12 +284,37 @@ class OnchainProvider(AssetProvider):
         self._requested_price_coin_ids: set[str] = set()
 
     async def fetch_assets(self) -> list[Asset]:
+        """读取全部启用钱包，并隔离单地址故障。
+
+        输入：Provider 配置中的全部启用链上账户和地址。
+        输出：全部成功时返回完整资产列表；部分地址失败时抛出携带成功资产和失败钱包
+        范围的 ``PartialAssetFetchError``，供 Service 返回部分结果及 STALE 缓存。
+        """
         assets: list[Asset] = []
+        failed_scopes: set[AssetScope] = set()
+        error_names: list[str] = []
+        address_count = 0
         async with self._client() as client:
             for account in self.config.onchainAccounts:
                 if not account.enabled:
                     continue
-                assets.extend(await self._fetch_account_assets(client, account))
+                address_count += len(account.addresses)
+                account_assets, account_scopes, account_errors = (
+                    await self._fetch_account_assets(client, account)
+                )
+                assets.extend(account_assets)
+                failed_scopes.update(account_scopes)
+                error_names.extend(account_errors)
+        if error_names:
+            error_summary = ", ".join(sorted(set(error_names)))
+            raise PartialAssetFetchError(
+                assets=assets,
+                failed_scopes=failed_scopes,
+                message=(
+                    f"{len(error_names)} of {address_count} addresses failed: "
+                    f"{error_summary}"
+                ),
+            )
         return assets
 
     async def health_check(self) -> list[AccountStatus]:
@@ -313,8 +338,11 @@ class OnchainProvider(AssetProvider):
                         )
                     )
                     continue
-                try:
-                    assets = await self._fetch_account_assets(client, account)
+                assets, _failed_scopes, errors = await self._fetch_account_assets(
+                    client,
+                    account,
+                )
+                if not errors:
                     statuses.append(
                         AccountStatus(
                             "onchain",
@@ -325,7 +353,8 @@ class OnchainProvider(AssetProvider):
                             f"covered {len(account.addresses)} addresses, {len(assets)} assets",
                         )
                     )
-                except Exception as exc:  # noqa: BLE001
+                else:
+                    error_summary = ", ".join(sorted(set(errors)))
                     statuses.append(
                         AccountStatus(
                             "onchain",
@@ -333,7 +362,8 @@ class OnchainProvider(AssetProvider):
                             account.label,
                             True,
                             False,
-                            _safe_error(exc),
+                            f"{len(errors)} of {len(account.addresses)} addresses failed: "
+                            f"{error_summary}",
                         )
                     )
         return statuses
@@ -342,43 +372,56 @@ class OnchainProvider(AssetProvider):
         self,
         client: httpx.AsyncClient,
         account: OnchainAccountConfig,
-    ) -> list[Asset]:
+    ) -> tuple[list[Asset], set[AssetScope], list[str]]:
+        """逐地址读取单个链上账户并收集脱敏错误。
+
+        输入：HTTP client 和一个链上账户配置。
+        输出：成功资产、失败的 ``(accountId, wallet)`` 范围及脱敏异常名称；某个地址
+        失败不会中断同账户后续地址，原始完整地址不会进入错误摘要。
+        """
         prices: dict[str, float] | None = None
         assets: list[Asset] = []
+        failed_scopes: set[AssetScope] = set()
+        errors: list[str] = []
         for address in account.addresses:
-            spec = _chain_spec(address.chain)
-            if spec.kind == "evm":
-                if self.config.onchainIndexer.apiKey:
-                    indexed_assets, indexed_contracts = await self._covalent_assets(
-                        client,
-                        account,
-                        address,
-                        spec,
-                    )
-                    assets.extend(indexed_assets)
-                    assets.extend(
-                        await self._configured_evm_assets(
+            spec: ChainSpec | None = None
+            try:
+                spec = _chain_spec(address.chain)
+                if spec.kind == "evm":
+                    if self.config.onchainIndexer.apiKey:
+                        indexed_assets, indexed_contracts = await self._covalent_assets(
                             client,
                             account,
                             address,
                             spec,
-                            skip_contracts=indexed_contracts,
                         )
-                    )
+                        assets.extend(indexed_assets)
+                        assets.extend(
+                            await self._configured_evm_assets(
+                                client,
+                                account,
+                                address,
+                                spec,
+                                skip_contracts=indexed_contracts,
+                            )
+                        )
+                    else:
+                        assets.extend(await self._evm_common_assets(client, account, address, spec))
+                elif spec.kind == "bitcoin":
+                    prices = prices or await self._native_price_map(client, account)
+                    assets.extend(await self._bitcoin_assets(client, account, address, spec, prices))
+                elif spec.kind == "solana":
+                    prices = prices or await self._native_price_map(client, account)
+                    assets.extend(await self._solana_assets(client, account, address, spec, prices))
+                elif spec.kind == "tron":
+                    prices = prices or await self._native_price_map(client, account)
+                    assets.extend(await self._tron_assets(client, account, address, spec, prices))
                 else:
-                    assets.extend(await self._evm_common_assets(client, account, address, spec))
-            elif spec.kind == "bitcoin":
-                prices = prices or await self._native_price_map(client, account)
-                assets.extend(await self._bitcoin_assets(client, account, address, spec, prices))
-            elif spec.kind == "solana":
-                prices = prices or await self._native_price_map(client, account)
-                assets.extend(await self._solana_assets(client, account, address, spec, prices))
-            elif spec.kind == "tron":
-                prices = prices or await self._native_price_map(client, account)
-                assets.extend(await self._tron_assets(client, account, address, spec, prices))
-            else:
-                raise ValueError(f"Unsupported on-chain balance kind '{spec.kind}'.")
-        return assets
+                    raise ValueError(f"Unsupported on-chain balance kind '{spec.kind}'.")
+            except Exception as exc:  # noqa: BLE001
+                failed_scopes.add(_address_scope(account, address, spec))
+                errors.append(_safe_error(exc))
+        return assets, failed_scopes, errors
 
     async def _evm_common_assets(
         self,
@@ -991,6 +1034,25 @@ def _explorer_api_url(spec: ChainSpec, address: OnchainAddressConfig) -> str:
     if not url:
         raise ValueError(f"Missing explorer API URL for '{spec.key}'.")
     return url.rstrip("/")
+
+
+def _address_scope(
+    account: OnchainAccountConfig,
+    address: OnchainAddressConfig,
+    spec: ChainSpec | None,
+) -> AssetScope:
+    """生成与标准化资产一致的地址缓存范围。
+
+    输入：地址所属账户、地址配置，以及可选的已解析链定义；链解析失败时直接使用
+    配置中的规范化链名称。输出：``(accountId, wallet)`` 元组，其中 wallet 优先使用
+    用户标签，否则仅包含链名和缩略地址，既能精确匹配缓存又不会泄露完整地址。
+    """
+    if address.label:
+        wallet = address.label
+    else:
+        chain = spec.key if spec is not None else address.chain.strip().lower()
+        wallet = f"{chain}:{_short_address(address.address)}"
+    return account.id, wallet
 
 
 def _short_address(address: str) -> str:

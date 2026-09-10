@@ -18,7 +18,7 @@ from asset_mcp.config import AppConfig, load_config
 from asset_mcp.domain.models import AccountStatus, Asset, Position
 from asset_mcp.domain.risk import build_risk
 from asset_mcp.domain.scenario import run_scenario as calculate_scenario
-from asset_mcp.providers.base import AssetProvider
+from asset_mcp.providers.base import AssetProvider, AssetScope, PartialAssetFetchError
 from asset_mcp.providers.registry import PROVIDER_FACTORIES, build_provider_entries
 from asset_mcp.storage import PortfolioStore, default_database_path
 
@@ -29,6 +29,7 @@ PROCESS_ISOLATED_SOURCES = {"longbridge", "moomoo"}
 
 class ProviderErrorCode(str, Enum):
     TIMEOUT = "provider_timeout"
+    PROVIDER_PARTIAL = "provider_partial"
     PROVIDER_EXCEPTION = "provider_exception"
     PROVIDER_EXITED = "provider_exited"
 
@@ -80,6 +81,7 @@ class _ProviderActionResult:
     source: str
     items: list[Any]
     error: _ProviderError | None = None
+    failed_scopes: frozenset[AssetScope] = frozenset()
 
 
 class AssetService:
@@ -294,7 +296,27 @@ class AssetService:
         for result in results:
             if result.error is not None:
                 provider_errors.append(result.error)
-                if self.store is not None:
+                if result.error.code == ProviderErrorCode.PROVIDER_PARTIAL:
+                    cached_items = (
+                        self.store.load_current_assets(source=result.source)
+                        if self.store is not None
+                        else []
+                    )
+                    current_items = result.items
+                    if result.source == "onchain":
+                        current_items = _reuse_last_known_onchain_prices(
+                            current_items,
+                            cached_items,
+                        )
+                    merged_items = _merge_partial_assets(
+                        current_items,
+                        cached_items,
+                        result.failed_scopes,
+                    )
+                    assets.extend(merged_items)
+                    if self.store is not None:
+                        self.store.replace_current_assets(result.source, merged_items)
+                elif self.store is not None:
                     assets.extend(
                         self.store.load_current_assets(
                             source=result.source,
@@ -431,6 +453,13 @@ async def _run_provider_action_in_thread(
             items=[],
             error=_timeout_error(source, action, timeout_seconds),
         )
+    except PartialAssetFetchError as exc:
+        return _ProviderActionResult(
+            source=source,
+            items=exc.assets,
+            error=_partial_provider_error(source, exc),
+            failed_scopes=exc.failed_scopes,
+        )
     except Exception as exc:  # noqa: BLE001
         return _ProviderActionResult(source=source, items=[], error=_provider_error(source, exc))
 
@@ -544,6 +573,25 @@ def _provider_error(source: str, exc: Exception) -> _ProviderError:
     )
 
 
+def _partial_provider_error(
+    source: str,
+    exc: PartialAssetFetchError,
+) -> _ProviderError:
+    """把部分读取异常转换为可公开的结构化错误。
+
+    输入：Provider 来源和只包含脱敏摘要的 ``PartialAssetFetchError``。
+    输出：错误码为 ``provider_partial``、允许重试的 Provider 错误；成功资产与失败
+    地址范围由调用方分别处理，不在公开错误中暴露完整账户地址。
+    """
+    return _ProviderError(
+        source=source,
+        code=ProviderErrorCode.PROVIDER_PARTIAL,
+        error=exc.__class__.__name__,
+        message=str(exc),
+        retryable=True,
+    )
+
+
 def _raise_provider_errors(errors: list[_ProviderError]) -> None:
     names = ", ".join(f"{error.source}:{error.error}" for error in errors)
     raise RuntimeError(f"Failed to fetch one or more providers: {names}")
@@ -602,6 +650,34 @@ def _reuse_last_known_onchain_prices(
             )
         )
     return restored
+
+
+def _merge_partial_assets(
+    current_assets: list[Asset],
+    cached_assets: list[Asset],
+    failed_scopes: frozenset[AssetScope],
+) -> list[Asset]:
+    """合并部分成功资产和仅属于失败地址的历史缓存。
+
+    输入：本轮成功读取的资产、上一轮同来源缓存，以及失败的
+    ``(accountId, wallet)`` 集合。输出：成功地址保持本轮同步状态，失败地址缓存复制为
+    ``STALE``；成功但余额已清零的地址不会错误恢复旧资产，输入列表不会被修改。
+    """
+    stale_assets = [
+        replace(asset, syncStatus="STALE")
+        for asset in cached_assets
+        if _asset_scope(asset) in failed_scopes
+    ]
+    return [*current_assets, *stale_assets]
+
+
+def _asset_scope(asset: Asset) -> AssetScope:
+    """返回资产所属的地址缓存范围。
+
+    输入：一个标准化资产。输出：由账户 ID 和钱包标识组成的二元组；无钱包的资产以
+    空字符串占位，使比较保持确定性且不会与正常链上地址意外匹配。
+    """
+    return asset.accountId, asset.wallet or ""
 
 
 def _onchain_price_key(

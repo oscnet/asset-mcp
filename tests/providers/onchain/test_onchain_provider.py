@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from asset_mcp.config import parse_config
+from asset_mcp.providers.base import PartialAssetFetchError
 from asset_mcp.providers.onchain import OnchainProvider
 
 
@@ -132,7 +133,7 @@ async def test_onchain_health_check_reports_unsupported_chain():
     statuses = await OnchainProvider(config, client=_FakeOnchainClient()).health_check()
 
     assert statuses[0].ok is False
-    assert statuses[0].message == "ValueError"
+    assert statuses[0].message == "1 of 1 addresses failed: ValueError"
 
 
 @pytest.mark.asyncio
@@ -161,6 +162,55 @@ async def test_solana_keeps_standard_tokens_when_token_2022_is_unsupported():
     assets = await OnchainProvider(config, client=_FakeOnchainClient()).fetch_assets()
 
     assert {asset.symbol for asset in assets} == {"SOL", "JUP123...7890"}
+
+
+@pytest.mark.asyncio
+async def test_onchain_fetch_isolates_one_failed_address_and_reports_partial_assets():
+    """输入同账户一个 EVM 地址失败、一个成功；输出成功资产和不含原地址的部分异常。"""
+    config = parse_config(
+        {
+            "rates": {"ETH": 2000},
+            "onchain": {
+                "accounts": [
+                    {
+                        "id": "wallet-main",
+                        "label": "Wallet",
+                        "addresses": [
+                            {
+                                "chain": "ethereum",
+                                "address": "0x0000000000000000000000000000000000000001",
+                            },
+                            {
+                                "chain": "ethereum",
+                                "address": "0x0000000000000000000000000000000000000002",
+                            },
+                        ],
+                    }
+                ]
+            },
+        }
+    )
+    provider = OnchainProvider(
+        config,
+        client=_PartiallyFailingEvmClient(),
+        evm_min_interval_seconds=0,
+    )
+
+    with pytest.raises(PartialAssetFetchError) as captured:
+        await provider.fetch_assets()
+
+    assert [(asset.symbol, asset.wallet) for asset in captured.value.assets] == [
+        ("ETH", "ethereum:0x0000...0002")
+    ]
+    assert captured.value.failed_scopes == {
+        ("wallet-main", "ethereum:0x0000...0001")
+    }
+    assert "0x0000000000000000000000000000000000000001" not in str(captured.value)
+
+    statuses = await provider.health_check()
+    assert statuses[0].ok is False
+    assert statuses[0].message.startswith("1 of 2 addresses failed")
+    assert "0x0000000000000000000000000000000000000001" not in statuses[0].message
 
 
 class _FakeResponse:
@@ -525,3 +575,16 @@ class _RateLimitedPriceEvmClient:
         """输入价格 URL 与参数；输出持续 HTTP 429 以验证余额降级行为。"""
         self.price_request_count += 1
         return _FakeResponse(429, {})
+
+
+class _PartiallyFailingEvmClient:
+    async def post(self, _url, **kwargs):
+        """输入两个地址的 EVM RPC；输出首地址错误、次地址 2 ETH 或零 Token 余额。"""
+        payload = kwargs.get("json", {})
+        method = payload.get("method")
+        params = payload.get("params", [])
+        if method == "eth_getBalance" and params[0].endswith("0001"):
+            return _FakeResponse(200, {"error": {"code": -32000, "message": "unavailable"}})
+        if method == "eth_getBalance":
+            return _FakeResponse(200, {"result": hex(2 * 10**18)})
+        return _FakeResponse(200, {"result": "0x0"})

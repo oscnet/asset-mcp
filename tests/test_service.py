@@ -8,6 +8,7 @@ import pytest
 import asset_mcp.service as service_module
 from asset_mcp.config import AppConfig
 from asset_mcp.domain.models import AccountStatus, Asset, Position
+from asset_mcp.providers.base import PartialAssetFetchError
 from asset_mcp.service import AssetService
 from asset_mcp.storage import PortfolioStore
 
@@ -213,6 +214,47 @@ async def test_onchain_unknown_zero_price_is_error_and_not_snapshotted(monkeypat
     assert store.load_snapshot(datetime.now(timezone.utc).date().isoformat()) == []
 
 
+@pytest.mark.asyncio
+async def test_partial_onchain_fetch_keeps_fresh_and_failed_address_cache(monkeypatch, tmp_path):
+    """输入一个成功地址和一个失败地址缓存；输出 FRESH 与 STALE 并存及部分错误。"""
+    store = PortfolioStore(tmp_path / "portfolio.db")
+    stale_wallet = "ethereum:0x0000...0001"
+    fresh_wallet = "ethereum:0x0000...0002"
+    store.replace_current_assets(
+        "onchain",
+        [_onchain_asset(quantity=1, unit_price=2000, value_usd=2000, wallet=stale_wallet)],
+    )
+    monkeypatch.setattr(
+        service_module,
+        "build_provider_entries",
+        lambda config, source=None: [
+            (
+                "onchain",
+                _PartialOnchainProvider(
+                    [_onchain_asset(quantity=2, unit_price=2100, value_usd=4200, wallet=fresh_wallet)],
+                    {("wallet-main", stale_wallet)},
+                ),
+            )
+        ],
+    )
+
+    result = await AssetService(AppConfig(), store=store).get_assets_payload(source="onchain")
+
+    by_wallet = {asset["wallet"]: asset for asset in result["assets"]}
+    assert result["ok"] is False
+    assert result["partial"] is True
+    assert result["count"] == 2
+    assert by_wallet[fresh_wallet]["syncStatus"] == "FRESH"
+    assert by_wallet[stale_wallet]["syncStatus"] == "STALE"
+    assert result["providerErrors"][0]["code"] == "provider_partial"
+    assert result["providerErrors"][0]["retryable"] is True
+    assert {asset.wallet for asset in store.load_current_assets("onchain")} == {
+        stale_wallet,
+        fresh_wallet,
+    }
+    assert store.load_snapshot(datetime.now(timezone.utc).date().isoformat()) == []
+
+
 def test_service_uses_default_store_for_normal_runtime(monkeypatch, tmp_path):
     database_path = tmp_path / "portfolio.db"
     monkeypatch.setenv("ASSET_MCP_DATABASE", str(database_path))
@@ -403,7 +445,27 @@ class _StaticProvider:
         return [AccountStatus("onchain", "wallet-main", "Wallet", True, True, "ok")]
 
 
-def _onchain_asset(quantity: int, unit_price: int, value_usd: int) -> Asset:
+class _PartialOnchainProvider(_StaticProvider):
+    def __init__(self, assets: list[Asset], failed_scopes: set[tuple[str, str]]):
+        """输入成功资产和失败地址范围；输出会抛出部分读取异常的链上测试 Provider。"""
+        super().__init__(assets)
+        self.failed_scopes = failed_scopes
+
+    async def fetch_assets(self) -> list[Asset]:
+        """输入无；输出通过异常携带成功资产及失败地址范围。"""
+        raise PartialAssetFetchError(
+            assets=self.assets,
+            failed_scopes=self.failed_scopes,
+            message="1 of 2 addresses failed: JsonRpcError",
+        )
+
+
+def _onchain_asset(
+    quantity: int,
+    unit_price: int,
+    value_usd: int,
+    wallet: str = "ethereum:0x0000...0001",
+) -> Asset:
     """输入数量、美元单价和美元价值；输出具有稳定缓存匹配键的 ETH 测试资产。"""
     return Asset(
         source="onchain",
@@ -417,7 +479,7 @@ def _onchain_asset(quantity: int, unit_price: int, value_usd: int) -> Asset:
         valueUsd=value_usd,
         updatedAt="2026-09-10T00:00:00Z",
         rawSource="onchain_native_balance",
-        wallet="ethereum:0x0000...0001",
+        wallet=wallet,
         chain="ethereum",
     )
 
