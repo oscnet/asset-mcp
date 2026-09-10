@@ -372,6 +372,72 @@ async def test_evm_rpc_does_not_retry_non_rate_limit_http_errors():
     assert clock.sleeps == []
 
 
+@pytest.mark.asyncio
+async def test_price_lookup_retries_429_and_reuses_successful_cache():
+    """输入价格接口先 429 后成功及两次相同查询；输出仅重试一次并复用成功价格。"""
+    clock = _FakeClock()
+    client = _SequencedPriceClient(
+        [
+            _FakeResponse(429, {}, {"Retry-After": "0.25"}),
+            _FakeResponse(200, {"ethereum": {"usd": 2500}}),
+        ],
+        clock,
+    )
+    provider = OnchainProvider(
+        parse_config({}),
+        client=client,
+        sleep=clock.sleep,
+        clock=clock,
+    )
+
+    first = await provider._price_map_for_coin_ids(client, {"ethereum": "ETH"})
+    second = await provider._price_map_for_coin_ids(client, {"ethereum": "ETH"})
+
+    assert first["ETH"] == 2500
+    assert second["ETH"] == 2500
+    assert client.request_count == 2
+    assert clock.sleeps == [pytest.approx(0.25)]
+
+
+@pytest.mark.asyncio
+async def test_evm_balance_survives_exhausted_price_rate_limit():
+    """输入余额 RPC 成功但 CoinGecko 持续 429；输出保留余额并用零美元价格降级。"""
+    config = parse_config(
+        {
+            "onchain": {
+                "accounts": [
+                    {
+                        "id": "onchain-main",
+                        "label": "On-chain Wallet",
+                        "addresses": [
+                            {
+                                "chain": "ethereum",
+                                "address": "0x0000000000000000000000000000000000000001",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+    )
+    clock = _FakeClock()
+    client = _RateLimitedPriceEvmClient(clock)
+    provider = OnchainProvider(
+        config,
+        client=client,
+        evm_min_interval_seconds=0,
+        sleep=clock.sleep,
+        clock=clock,
+    )
+
+    assets = await provider.fetch_assets()
+
+    assert [(asset.symbol, asset.quantity, asset.valueUsd) for asset in assets] == [
+        ("ETH", 2, 0)
+    ]
+    assert client.price_request_count == 4
+
+
 class _FakeClock:
     def __init__(self):
         self.now = 0.0
@@ -397,3 +463,34 @@ class _SequencedRpcClient:
         """输入 RPC URL 与请求参数；输出预置响应并记录请求发生时刻。"""
         self.request_times.append(self.clock())
         return self.responses.pop(0)
+
+
+class _SequencedPriceClient:
+    def __init__(self, responses, clock):
+        """输入预置价格响应和模拟时钟；输出可记录 GET 次数的测试客户端。"""
+        self.responses = list(responses)
+        self.clock = clock
+        self.request_count = 0
+
+    async def get(self, _url, **_kwargs):
+        """输入价格 URL 与查询参数；输出下一项预置响应并累计请求次数。"""
+        self.request_count += 1
+        return self.responses.pop(0)
+
+
+class _RateLimitedPriceEvmClient:
+    def __init__(self, clock):
+        """输入模拟时钟；输出余额成功、价格持续限流的测试客户端。"""
+        self.clock = clock
+        self.price_request_count = 0
+
+    async def post(self, _url, **kwargs):
+        """输入 EVM JSON-RPC 请求；输出 2 ETH 原生余额或零 ERC-20 余额。"""
+        method = kwargs.get("json", {}).get("method")
+        result = hex(2 * 10**18) if method == "eth_getBalance" else "0x0"
+        return _FakeResponse(200, {"result": result})
+
+    async def get(self, _url, **_kwargs):
+        """输入价格 URL 与参数；输出持续 HTTP 429 以验证余额降级行为。"""
+        self.price_request_count += 1
+        return _FakeResponse(429, {})

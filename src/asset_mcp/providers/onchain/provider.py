@@ -263,6 +263,12 @@ class OnchainProvider(AssetProvider):
         self._sleep = sleep
         self._clock = clock
         self._last_evm_request_at: dict[str, float] = {}
+        self._price_cache = {
+            symbol.upper(): float(price) for symbol, price in self.config.rates.items()
+        }
+        for symbol in STABLE_USD_SYMBOLS:
+            self._price_cache.setdefault(symbol, 1.0)
+        self._requested_price_coin_ids: set[str] = set()
 
     async def fetch_assets(self) -> list[Asset]:
         assets: list[Asset] = []
@@ -686,30 +692,68 @@ class OnchainProvider(AssetProvider):
         client: httpx.AsyncClient,
         coin_ids: dict[str, str],
     ) -> dict[str, float]:
-        prices = {symbol.upper(): price for symbol, price in self.config.rates.items()}
-        for symbol in STABLE_USD_SYMBOLS:
-            prices.setdefault(symbol, 1.0)
+        """读取并缓存一组 CoinGecko 美元价格。
+
+        输入：HTTP client，以及 CoinGecko coin id 到资产代码的映射。
+        输出：配置价格、稳定币默认价格和本轮已成功取得价格的副本；同一 coin id 在单次
+        Provider 生命周期内最多查询一轮。价格请求持续限流或网络失败时保留余额所需的
+        已知价格并安全降级，不让外部价格服务故障中断链上资产同步。
+        """
+        prices = dict(self._price_cache)
         missing_ids = [
             coin_id
             for coin_id, symbol in coin_ids.items()
-            if coin_id and prices.get(symbol, 0.0) <= 0
+            if (
+                coin_id
+                and prices.get(symbol.upper(), 0.0) <= 0
+                and coin_id not in self._requested_price_coin_ids
+            )
         ]
         if not missing_ids:
             return prices
 
-        response = await client.get(
-            COINGECKO_PRICE_URL,
-            params={"ids": ",".join(sorted(missing_ids)), "vs_currencies": "usd"},
-        )
-        response.raise_for_status()
+        self._requested_price_coin_ids.update(missing_ids)
+        try:
+            response = await self._get_with_429_retry(
+                client,
+                COINGECKO_PRICE_URL,
+                params={"ids": ",".join(sorted(missing_ids)), "vs_currencies": "usd"},
+            )
+        except httpx.HTTPError:
+            return prices
         data = response.json()
         if not isinstance(data, dict):
             return prices
         for coin_id in missing_ids:
             price = _float((data.get(coin_id) or {}).get("usd"))
             if price > 0:
-                prices[coin_ids[coin_id]] = price
-        return prices
+                self._price_cache[coin_ids[coin_id].upper()] = price
+        return dict(self._price_cache)
+
+    async def _get_with_429_retry(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        **kwargs: Any,
+    ) -> Any:
+        """发送带有限 429 重试的辅助 GET 请求。
+
+        输入：HTTP client、目标 URL 及透传给 ``client.get`` 的关键字参数。
+        输出：首个成功响应；429 遵循 Retry-After 或指数退避并最多重试配置次数，其他
+        HTTP 错误立即抛出，持续 429 在次数耗尽后抛出供调用方执行价格降级。
+        """
+        response = None
+        for attempt in range(self.evm_max_retries + 1):
+            response = await client.get(url, **kwargs)
+            try:
+                response.raise_for_status()
+                return response
+            except httpx.HTTPStatusError:
+                if response.status_code != 429 or attempt >= self.evm_max_retries:
+                    raise
+                await self._sleep(_retry_delay_seconds(response, attempt))
+        assert response is not None
+        return response
 
     async def _jupiter_prices(
         self,
