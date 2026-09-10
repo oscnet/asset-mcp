@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import tempfile
 from contextlib import closing, contextmanager
 from dataclasses import asdict, replace
 from datetime import date, datetime, timedelta, timezone
@@ -328,34 +329,43 @@ class PortfolioStore:
         """用已验证通过的 SQLite 备份恢复当前数据库。
 
         输入：存在、完整、schema 版本为 1 到当前版本的 Asset MCP SQLite 文件。
-        输出：无返回值；验证失败时当前库不变并抛出 ``ValueError``，成功后自动迁移旧版本。
+        输出：无返回值；先把备份复制、迁移并复检到同目录临时库，再原子替换当前库；
+        任一步失败均保留当前库，格式或完整性错误抛出 ``ValueError``。
         """
         source_path = Path(backup_path).expanduser()
         if not source_path.is_file():
             raise FileNotFoundError(source_path)
         if source_path.resolve() == self.path.resolve():
             raise ValueError("restore source must differ from database path")
+        temporary_file = tempfile.NamedTemporaryFile(
+            prefix=f".{self.path.name}.restore-",
+            suffix=".db",
+            dir=self.path.parent,
+            delete=False,
+        )
+        temporary_path = Path(temporary_file.name)
+        temporary_file.close()
         try:
             with closing(
                 sqlite3.connect(f"file:{source_path}?mode=ro", uri=True)
             ) as source_connection:
-                integrity = source_connection.execute("PRAGMA quick_check").fetchone()[0]
-                version = source_connection.execute("PRAGMA user_version").fetchone()[0]
-                tables = {
-                    row[0]
-                    for row in source_connection.execute(
-                        "SELECT name FROM sqlite_master WHERE type = 'table'"
-                    ).fetchall()
-                }
-                if integrity != "ok" or version not in range(1, SCHEMA_VERSION + 1):
-                    raise ValueError("backup is not a valid SQLite portfolio database")
-                if "current_assets" not in tables or "snapshot_sources" not in tables:
-                    raise ValueError("backup is not a valid SQLite portfolio database")
-                with closing(sqlite3.connect(self.path)) as target_connection:
+                _validate_portfolio_database(source_connection)
+                with closing(sqlite3.connect(temporary_path)) as target_connection:
                     source_connection.backup(target_connection)
+            PortfolioStore(temporary_path)
+            with closing(
+                sqlite3.connect(f"file:{temporary_path}?mode=ro", uri=True)
+            ) as restored_connection:
+                _validate_portfolio_database(restored_connection)
+            try:
+                temporary_path.chmod(0o600)
+            except OSError:
+                pass
+            temporary_path.replace(self.path)
         except sqlite3.DatabaseError as exc:
             raise ValueError("backup is not a valid SQLite portfolio database") from exc
-        self._initialize()
+        finally:
+            temporary_path.unlink(missing_ok=True)
 
     def _initialize(self) -> None:
         """创建或验证当前 SQLite schema。
@@ -469,6 +479,27 @@ class PortfolioStore:
                 yield connection
         finally:
             connection.close()
+
+
+def _validate_portfolio_database(connection: sqlite3.Connection) -> None:
+    """验证连接指向可恢复的 Asset MCP SQLite 数据库。
+
+    输入：以只读或临时文件方式打开的 SQLite 连接。
+    输出：完整性、schema 版本和核心表均有效时无返回值；不满足恢复契约时抛出
+    ``ValueError``，SQLite 自身读取错误由调用方统一转换。
+    """
+    integrity = connection.execute("PRAGMA quick_check").fetchone()[0]
+    version = connection.execute("PRAGMA user_version").fetchone()[0]
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    if integrity != "ok" or version not in range(1, SCHEMA_VERSION + 1):
+        raise ValueError("backup is not a valid SQLite portfolio database")
+    if "current_assets" not in tables or "snapshot_sources" not in tables:
+        raise ValueError("backup is not a valid SQLite portfolio database")
 
 
 def _serialize_asset(asset: Asset) -> str:

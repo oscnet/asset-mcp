@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import closing
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -157,6 +158,28 @@ def test_restore_rejects_invalid_database_without_changing_current_state(tmp_pat
     current = store.load_current_assets("okx")
     assert len(current) == 1
     assert current[0].symbol == "ETH"
+
+
+def test_restore_replace_failure_keeps_current_database(monkeypatch, tmp_path):
+    """输入有效备份和模拟原子替换失败；输出异常且当前数据库资产保持不变。"""
+    store = PortfolioStore(tmp_path / "portfolio.db")
+    store.replace_current_assets("manual", [_asset("manual", "BTC", "1", "6000")])
+    backup_path = store.backup_to(tmp_path / "backup.db")
+    store.replace_current_assets("manual", [_asset("manual", "USD", "100", "100")])
+    original_replace = Path.replace
+
+    def failing_replace(source: Path, target: Path):
+        """输入临时库和当前库路径；输出模拟磁盘原子替换失败。"""
+        if Path(target) == store.path:
+            raise OSError("simulated replace failure")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", failing_replace)
+
+    with pytest.raises(OSError, match="replace failure"):
+        store.restore_from(backup_path)
+
+    assert store.load_current_assets()[0].symbol == "USD"
 
 
 def test_net_worth_history_aggregates_sources_and_excludes_old_days(tmp_path):

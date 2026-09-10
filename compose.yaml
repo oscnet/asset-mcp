@@ -1,0 +1,43 @@
+services:
+  asset-mcp-web:
+    build:
+      context: .
+    image: asset-mcp:local
+    environment:
+      ASSET_MCP_CONFIG: /data/config.local.yaml
+      ASSET_MCP_DATABASE: /data/portfolio.db
+      ASSET_MCP_VAULT_FILE: /data/credentials.enc
+      ASSET_MCP_MASTER_PASSWORD_FILE: /run/secrets/asset_mcp_master_password
+    ports:
+      - "127.0.0.1:${ASSET_MCP_WEB_PORT:-8501}:8501"
+    volumes:
+      - asset-mcp-data:/data
+    secrets:
+      - asset_mcp_master_password
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request; assert
+          urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health',
+          timeout=2).read() == b'ok'
+      interval: 30s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  asset-mcp-data:
+    name: asset-mcp-data
+
+secrets:
+  asset_mcp_master_password:
+    file: ${ASSET_MCP_MASTER_PASSWORD_FILE:-/dev/null}

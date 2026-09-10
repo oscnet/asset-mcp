@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+import asset_mcp.security.credentials as credentials_module
 from asset_mcp.config import ConfigError
 from asset_mcp.security.credentials import (
     CredentialVault,
@@ -125,6 +126,23 @@ def test_migrate_inline_credentials_writes_vault_and_returns_reference_config():
     assert raw["exchanges"]["binance"]["accounts"][0]["apiKey"] == "key"
 
 
+def test_default_vault_reads_master_password_from_secret_file(monkeypatch, tmp_path):
+    """输入只读主密码文件；输出可加密写入指定 Fernet 文件的默认保险库。"""
+    password_file = tmp_path / "master-password"
+    password_file.write_text("correct horse battery staple\n", encoding="utf-8")
+    vault_file = tmp_path / "credentials.enc"
+    monkeypatch.delenv("ASSET_MCP_MASTER_PASSWORD", raising=False)
+    monkeypatch.setenv("ASSET_MCP_MASTER_PASSWORD_FILE", str(password_file))
+    monkeypatch.setenv("ASSET_MCP_VAULT_FILE", str(vault_file))
+    monkeypatch.setattr(credentials_module, "KeyringBackend", _UnavailableKeyringBackend)
+
+    vault = credentials_module.default_credential_vault()
+    vault.put("binance/main", {"apiKey": "key", "apiSecret": "secret"})
+
+    assert vault_file.exists()
+    assert "secret" not in vault_file.read_text(encoding="utf-8")
+
+
 class _MemoryBackend:
     def __init__(self, values=None):
         self.values = dict(values or {})
@@ -166,3 +184,9 @@ class _FakeKeyring:
         输出：无返回值；保存字符串供读取断言。
         """
         self.values[(service, username)] = password
+
+
+class _UnavailableKeyringBackend:
+    def is_available(self):
+        """输入无；输出 ``False``，模拟容器内没有系统 Keychain。"""
+        return False

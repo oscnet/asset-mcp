@@ -125,6 +125,16 @@ uv sync --extra web
 uv run asset-mcp-web
 ```
 
+For an isolated local deployment, use Docker Compose:
+
+```bash
+docker compose up -d --build
+open http://127.0.0.1:8501
+```
+
+See the Chinese [Docker deployment and operations guide](docs/DOCKER_DEPLOYMENT_zh.md)
+for credential import, health checks, backup, restore, upgrades, and MCP stdio usage.
+
 Streamlit listens locally by default. The dashboard is read-only and reuses
 the same config, credential vault, SQLite snapshots, and deterministic risk
 services as the MCP server. Its portfolio drilldown filters asset details in
@@ -158,8 +168,9 @@ To migrate an existing inline-secret config without overwriting it:
 asset-mcp migrate-credentials --path config.local.yaml --output config.refs.yaml
 ```
 
-On systems without an OS Keychain, set `ASSET_MCP_MASTER_PASSWORD` first. The
-encrypted file defaults to `~/.local/share/asset-mcp/credentials.enc`.
+On systems without an OS Keychain, set `ASSET_MCP_MASTER_PASSWORD_FILE` to a
+mode-0600 file (preferred), or set `ASSET_MCP_MASTER_PASSWORD`. The encrypted
+vault defaults to `~/.local/share/asset-mcp/credentials.enc`.
 
 ### Binance
 

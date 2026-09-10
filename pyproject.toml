@@ -33,7 +33,7 @@ dependencies = [
     "cryptography>=43.0.0",
     "httpx>=0.27.0",
     "keyring>=25.0.0",
-    "mcp>=1.2.0",
+    "mcp>=1.2.0,<2",
     "PyYAML>=6.0.1",
 ]
 
@@ -62,7 +62,7 @@ dev = [
 
 [project.scripts]
 asset-mcp = "asset_mcp.cli:main"
-asset-mcp-web = "asset_mcp.web.app:main"
+asset-mcp-web = "asset_mcp.web.cli:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import pytest
@@ -108,6 +109,25 @@ def test_backup_and_confirmed_restore_commands(tmp_path, monkeypatch, capsys):
     assert f"Restored database: {database_path}" in capsys.readouterr().out
 
 
+def test_confirmed_restore_accepts_sqlite_backup_from_stdin(tmp_path, monkeypatch, capsys):
+    """输入 stdin 中的 SQLite 备份字节；输出恢复后的原资产，且无需容器内上传文件。"""
+    database_path = tmp_path / "portfolio.db"
+    backup_path = tmp_path / "portfolio.backup.db"
+    monkeypatch.setenv("ASSET_MCP_DATABASE", str(database_path))
+    store = PortfolioStore(database_path)
+    store.replace_current_assets("manual", [_manual_asset("BTC", 6000)])
+    store.backup_to(backup_path)
+    store.replace_current_assets("manual", [_manual_asset("USD", 100)])
+    stdin = _BinaryStdin(backup_path.read_bytes())
+    monkeypatch.setattr(cli.sys, "stdin", stdin)
+
+    result = cli.main(["restore", "--stdin", "--yes"])
+
+    assert result == 0
+    assert store.load_current_assets()[0].symbol == "BTC"
+    assert "Restored database" in capsys.readouterr().out
+
+
 def test_migrate_credentials_writes_new_reference_config(tmp_path, monkeypatch, capsys):
     source_path = tmp_path / "legacy.yaml"
     output_path = tmp_path / "config.refs.yaml"
@@ -147,6 +167,26 @@ exchanges:
     assert source_path.read_text(encoding="utf-8").find("apiSecret: secret") > 0
     assert backend.values["binance/binance-main"]["apiSecret"] == "secret"
     assert "Migrated 1 account" in capsys.readouterr().out
+
+
+def test_set_credential_reads_json_from_stdin_without_echoing_values(monkeypatch, capsys):
+    """输入 stdin 中的凭据 JSON；输出保险库引用与字段名，但绝不回显秘密值。"""
+    backend = _CliMemoryBackend()
+    monkeypatch.setattr(cli, "default_credential_vault", lambda: CredentialVault(backend))
+    monkeypatch.setattr(
+        cli.sys,
+        "stdin",
+        io.StringIO('{"apiKey":"visible-key","apiSecret":"visible-secret"}'),
+    )
+
+    result = cli.main(["set-credential", "--reference", "binance/main"])
+
+    output = capsys.readouterr().out
+    assert result == 0
+    assert backend.values["binance/main"]["apiSecret"] == "visible-secret"
+    assert "apiKey, apiSecret" in output
+    assert "visible-key" not in output
+    assert "visible-secret" not in output
 
 
 def _manual_asset(symbol: str, value_usd: int) -> Asset:
@@ -189,3 +229,8 @@ class _CliMemoryBackend:
         输出：无返回值；写入内存字典供断言。
         """
         self.values[reference] = dict(secrets)
+
+
+class _BinaryStdin:
+    def __init__(self, payload: bytes):
+        self.buffer = io.BytesIO(payload)

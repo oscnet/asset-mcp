@@ -14,6 +14,13 @@ build/
 config.local.yaml
 *.local.yaml
 !src/asset_mcp/templates/config.local.yaml
+.env
+.secrets/
+credentials*.json
+*.db
+*.db-*
+*.enc
+backups/
 
 # Demo recording intermediates (raw screen captures, VHS scratch)
 demo/_tmp/

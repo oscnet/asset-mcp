@@ -269,8 +269,9 @@ def migrate_inline_credentials(
 def default_credential_vault() -> CredentialVault:
     """选择当前环境可用的安全凭据后端。
 
-    输入：系统 keyring 能力，以及可选 ``ASSET_MCP_MASTER_PASSWORD`` 和
-    ``ASSET_MCP_VAULT_FILE`` 环境变量。
+    输入：系统 keyring 能力，以及可选 ``ASSET_MCP_MASTER_PASSWORD``、
+    ``ASSET_MCP_MASTER_PASSWORD_FILE`` 和 ``ASSET_MCP_VAULT_FILE`` 环境变量；
+    密码文件仅移除末尾换行，不会误删密码中的空格。
     输出：优先使用 OS Keychain 的 ``CredentialVault``；无 Keychain 时使用 Fernet
     文件后端；两者均不可用时抛出 ``ConfigError`` 并拒绝加载引用。
     """
@@ -281,9 +282,18 @@ def default_credential_vault() -> CredentialVault:
     except (ImportError, ModuleNotFoundError):
         pass
     master_password = os.environ.get("ASSET_MCP_MASTER_PASSWORD")
+    password_file = os.environ.get("ASSET_MCP_MASTER_PASSWORD_FILE")
+    if not master_password and password_file:
+        try:
+            master_password = Path(password_file).expanduser().read_text(
+                encoding="utf-8"
+            ).rstrip("\r\n")
+        except OSError as exc:
+            raise ConfigError("credential vault master password file is unavailable") from exc
     if not master_password:
         raise ConfigError(
-            "No OS keyring available; set ASSET_MCP_MASTER_PASSWORD for encrypted file vault"
+            "No OS keyring available; set ASSET_MCP_MASTER_PASSWORD_FILE or "
+            "ASSET_MCP_MASTER_PASSWORD for encrypted file vault"
         )
     vault_path = Path(
         os.environ.get(

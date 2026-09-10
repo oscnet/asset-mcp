@@ -111,6 +111,17 @@ uv run asset-mcp init --path config.local.yaml
 uv sync --extra dev
 ```
 
+## Docker 部署
+
+```bash
+docker compose up -d --build
+open http://127.0.0.1:8501
+```
+
+容器默认只监听本机地址，配置、SQLite 和加密凭据保存在命名卷中。完整的凭据导入、
+健康检查、备份、恢复和升级步骤见
+[Docker 部署与运维指南](docs/DOCKER_DEPLOYMENT_zh.md)。
+
 ## 配置
 
 `asset-mcp init` 会把初始配置模板写入
@@ -120,8 +131,10 @@ uv sync --extra dev
 `config.example.yaml` 相同。完整字段和内联注释请参考 GitHub 上的该文件
 （见下方 **链接**）。
 
-真实 API key 和个人资产余额只应保存在本地配置文件中，不要提交到仓库。
-每个账户的 `id` 必须唯一且稳定；这个 id 会出现在 MCP 响应中，也用于过滤。
+API key 只应保存在系统 Keychain 或加密凭据文件中，YAML 仅填写
+`credentialRef`；不要把秘密提交到仓库。每个账户的 `id` 必须唯一且稳定；这个 id
+会出现在 MCP 响应中，也用于过滤。无系统 Keychain 时，优先用
+`ASSET_MCP_MASTER_PASSWORD_FILE` 指向权限为 `0600` 的主密码文件。
 
 ### Binance
 
@@ -135,8 +148,7 @@ exchanges:
       - id: binance-main
         label: Binance Main
         enabled: true
-        apiKey: "replace-with-read-only-key"
-        apiSecret: "replace-with-read-only-secret"
+        credentialRef: binance/binance-main
         # environment: production    # optional
 ```
 
@@ -151,9 +163,7 @@ exchanges:
       - id: okx-main
         label: OKX Main
         enabled: true
-        apiKey: "replace-with-read-only-key"
-        apiSecret: "replace-with-read-only-secret"
-        passphrase: "replace-with-passphrase"
+        credentialRef: okx/okx-main
         # domain: https://www.okx.com   # optional
 ```
 

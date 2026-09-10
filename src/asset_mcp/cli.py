@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
+import shutil
 import sys
+import tempfile
 from importlib import resources
 from pathlib import Path
 from typing import Sequence
@@ -70,7 +73,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "restore",
         help="restore the SQLite database from a validated backup",
     )
-    restore_parser.add_argument("--path", type=Path, required=True, help="existing backup file")
+    restore_source = restore_parser.add_mutually_exclusive_group(required=True)
+    restore_source.add_argument("--path", type=Path, help="existing backup file")
+    restore_source.add_argument(
+        "--stdin",
+        action="store_true",
+        help="read SQLite backup bytes from stdin",
+    )
     restore_parser.add_argument(
         "--yes",
         action="store_true",
@@ -95,6 +104,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="new credential-reference config path",
     )
     migrate_parser.set_defaults(handler=_handle_migrate_credentials)
+
+    credential_parser = subparsers.add_parser(
+        "set-credential",
+        help="store one JSON credential bundle from stdin",
+    )
+    credential_parser.add_argument(
+        "--reference",
+        required=True,
+        help="stable credentialRef used by config, for example binance/main",
+    )
+    credential_parser.set_defaults(handler=_handle_set_credential)
 
     parser.set_defaults(handler=_handle_serve)
     return parser
@@ -129,14 +149,30 @@ def _handle_backup(args: argparse.Namespace) -> int:
 def _handle_restore(args: argparse.Namespace) -> int:
     """执行经过显式确认的本地数据库恢复命令。
 
-    输入：argparse Namespace，包含备份 ``path`` 和布尔 ``yes`` 确认标记。
-    输出：缺少确认时不修改数据、打印错误并返回 2；验证和恢复成功时返回 0。
+    输入：argparse Namespace，包含备份 ``path`` 或二进制 ``stdin`` 来源，以及布尔
+    ``yes`` 确认标记；stdin 内容只暂存到系统临时目录且最终自动删除。
+    输出：缺少确认时不读取输入、不修改数据并返回 2；验证和原子恢复成功时返回 0。
     """
     if not args.yes:
         print("Restore replaces the current database and requires --yes.", file=sys.stderr)
         return 2
     store = PortfolioStore(default_database_path())
-    store.restore_from(args.path)
+    temporary_path: Path | None = None
+    source_path = args.path
+    if args.stdin:
+        with tempfile.NamedTemporaryFile(
+            prefix="asset-mcp-restore-",
+            suffix=".db",
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            shutil.copyfileobj(getattr(sys.stdin, "buffer", sys.stdin), temporary_file)
+        source_path = temporary_path
+    try:
+        store.restore_from(source_path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
     print(f"Restored database: {store.path}")
     return 0
 
@@ -161,6 +197,22 @@ def _handle_migrate_credentials(args: argparse.Namespace) -> int:
     )
     _chmod_if_supported(output_path, 0o600)
     print(f"Migrated {count} account(s): {output_path}")
+    return 0
+
+
+def _handle_set_credential(args: argparse.Namespace) -> int:
+    """从标准输入安全保存一组凭据。
+
+    输入：Namespace 中的稳定 ``reference``，以及 stdin 中仅含字符串键值的 JSON 对象。
+    输出：保存成功时仅打印引用与字段名并返回 0；秘密值永不回显，非法引用或内容由
+    ``CredentialVault`` 拒绝。该接口便于 Docker 通过重定向输入而不把秘密写进参数。
+    """
+    secrets = json.load(sys.stdin)
+    if not isinstance(secrets, dict):
+        raise ValueError("credential input must be a JSON object")
+    default_credential_vault().put(args.reference, secrets)
+    fields = ", ".join(sorted(secrets))
+    print(f"Stored credential: {args.reference} ({fields})")
     return 0
 
 

@@ -24,7 +24,7 @@
 | M2 合约仓位 | 09-12～09-17 | Binance USD-M、OKX Futures/Perpetual 仓位与未实现盈亏 | 完成 |
 | M3 安全与历史 | 09-18～09-23 | 凭据保险库、SQLite 当前状态、每日幂等快照、STALE | 完成 |
 | M4 组合计算与 MCP | 09-24～09-28 | allocation、risk、scenario、history 五类确定性查询 | 完成 |
-| M5 Web V1 与交付 | 09-29～10-05 | Streamlit Dashboard、配置、明细、CSV/JSON、Docker | 进行中 |
+| M5 Web V1 与交付 | 09-29～10-05 | Streamlit Dashboard、配置、明细、CSV/JSON、Docker | 已完成 |
 | M6 真实账户验收 | 10-06～10-08 | Binance/OKX/BTC/EVM/Solana 对账，金额覆盖率 ≥90% | 需 Oscar 本地参与 |
 
 ## 4. 可执行任务
@@ -66,7 +66,8 @@
 - [x] 总资产 → 币种 → 平台 → 账户 → 类型 → 位置下钻。
 - [x] 账户、钱包、手工资产和标签配置页面。
 - [x] CSV/JSON 导出。
-- [ ] Docker Compose、健康检查、备份说明和用户文档。
+- [x] Dockerfile、Compose、健康检查契约、备份恢复说明和用户文档。
+- [x] 镜像构建、非 root/只读容器、healthy 状态与 stdin 原子恢复演练。
 
 ### M6：真实账户验收
 
