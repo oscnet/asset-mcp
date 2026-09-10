@@ -46,6 +46,19 @@ class EvmTokenSpec:
     coin_gecko_id: str
 
 
+class JsonRpcError(ValueError):
+    """表示 HTTP 成功但 JSON-RPC 返回结构化错误。
+
+    输入：整数错误码和公开错误消息。
+    输出：可由调用方按错误码实施精确降级的 ``ValueError`` 子类；不保存请求参数，
+    避免账户地址进入异常对象或日志。
+    """
+
+    def __init__(self, code: int | None, message: str):
+        self.code = code
+        super().__init__(f"JSON-RPC error {code}: {message}")
+
+
 CHAIN_ALIASES = {
     "btc": "bitcoin",
     "bitcoin": "bitcoin",
@@ -594,16 +607,21 @@ class OnchainProvider(AssetProvider):
 
         token_rows = []
         for program_id in (SOLANA_TOKEN_PROGRAM_ID, SOLANA_TOKEN_2022_PROGRAM_ID):
-            data = await self._json_rpc(
-                client,
-                _rpc_url(spec, address),
-                "getTokenAccountsByOwner",
-                [
-                    address.address,
-                    {"programId": program_id},
-                    {"encoding": "jsonParsed"},
-                ],
-            )
+            try:
+                data = await self._json_rpc(
+                    client,
+                    _rpc_url(spec, address),
+                    "getTokenAccountsByOwner",
+                    [
+                        address.address,
+                        {"programId": program_id},
+                        {"encoding": "jsonParsed"},
+                    ],
+                )
+            except JsonRpcError as exc:
+                if program_id == SOLANA_TOKEN_2022_PROGRAM_ID and exc.code == -32602:
+                    continue
+                raise
             token_rows.extend((data.get("result") or {}).get("value", []))
 
         token_holdings = _solana_token_holdings(token_rows)
@@ -803,8 +821,11 @@ class OnchainProvider(AssetProvider):
         data = response.json()
         if not isinstance(data, dict):
             raise ValueError("Invalid JSON-RPC response.")
-        if data.get("error"):
-            raise ValueError("JSON-RPC error.")
+        error = data.get("error")
+        if error:
+            code = error.get("code") if isinstance(error, dict) else None
+            message = str(error.get("message") or "unknown") if isinstance(error, dict) else "unknown"
+            raise JsonRpcError(code, message)
         return data
 
     async def _throttle_evm_request(self, url: str) -> None:

@@ -135,6 +135,34 @@ async def test_onchain_health_check_reports_unsupported_chain():
     assert statuses[0].message == "ValueError"
 
 
+@pytest.mark.asyncio
+async def test_solana_keeps_standard_tokens_when_token_2022_is_unsupported():
+    """输入 Token-2022 返回 INVALID_PARAMS、标准 Token 正常；输出仍保留 SOL 和 SPL。"""
+    config = parse_config(
+        {
+            "rates": {"SOL": 100},
+            "onchain": {
+                "accounts": [
+                    {
+                        "id": "solana-main",
+                        "label": "Solana Wallet",
+                        "addresses": [
+                            {
+                                "chain": "solana",
+                                "address": "So11111111111111111111111111111111111111112",
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+    )
+
+    assets = await OnchainProvider(config, client=_FakeOnchainClient()).fetch_assets()
+
+    assert {asset.symbol for asset in assets} == {"SOL", "JUP123...7890"}
+
+
 class _FakeResponse:
     def __init__(self, status_code, data, headers=None):
         self.status_code = status_code
@@ -229,7 +257,10 @@ class _FakeOnchainClient:
             if payload.get("method") == "getTokenAccountsByOwner":
                 program_id = payload["params"][1]["programId"]
                 if program_id.startswith("Tokenz"):
-                    return _FakeResponse(200, {"result": {"value": []}})
+                    return _FakeResponse(
+                        200,
+                        {"error": {"code": -32602, "message": "INVALID_PARAMS"}},
+                    )
                 return _FakeResponse(
                     200,
                     {
