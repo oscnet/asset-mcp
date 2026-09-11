@@ -1,4 +1,5 @@
 from asset_mcp.domain.aggregation import build_dashboard_data, build_net_worth, filter_assets
+from asset_mcp.domain.loans import build_loan_assets
 from asset_mcp.domain.models import AccountStatus, Asset, Position, sum_value_usd, utc_now_iso
 
 __all__ = [
@@ -7,6 +8,7 @@ __all__ = [
     "Position",
     "build_dashboard_data",
     "build_net_worth",
+    "build_loan_assets",
     "filter_assets",
     "sum_value_usd",
     "utc_now_iso",

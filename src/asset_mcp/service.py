@@ -16,6 +16,7 @@ from asset_mcp.domain.aggregation import (
 )
 from asset_mcp.config import AppConfig, load_config
 from asset_mcp.domain.models import AccountStatus, Asset, Position
+from asset_mcp.domain.loans import build_loan_assets
 from asset_mcp.domain.risk import build_risk
 from asset_mcp.domain.scenario import run_scenario as calculate_scenario
 from asset_mcp.providers.base import AssetProvider, AssetScope, PartialAssetFetchError
@@ -284,11 +285,21 @@ class AssetService:
         return result.assets
 
     async def _fetch_assets_result(self, source: str | None = None) -> _FetchAssetsResult:
+        """读取资产来源并将手工借贷转换为负资产。
+
+        输入：可选来源过滤；``loan`` 会读取全部报价来源但只返回借贷资产，以便按当前
+        同币种价格估值。输出：实时或缓存资产、从净值扣减的借贷负资产及 Provider
+        错误；借贷快照作为独立 ``loan`` 来源持久化，不改变外部账户原始余额。
+        """
         config = self._config()
+        requested_provider_source = None if source == "loan" else source
         results = await asyncio.gather(
             *[
                 self._run_provider_action(provider_source, provider, config, "fetch_assets")
-                for provider_source, provider in build_provider_entries(config, source=source)
+                for provider_source, provider in build_provider_entries(
+                    config,
+                    source=requested_provider_source,
+                )
             ],
         )
         assets: list[Asset] = []
@@ -340,6 +351,13 @@ class AssetService:
                     self.store.replace_current_assets(result.source, current_items)
                     if all(item.syncStatus == "FRESH" for item in current_items):
                         self.store.save_daily_snapshot(result.source, current_items)
+        if source in (None, "loan"):
+            loan_assets = build_loan_assets(config.loanAssets, assets, config.rates)
+            if self.store is not None:
+                self.store.replace_current_assets("loan", loan_assets)
+                if loan_assets and all(item.syncStatus == "FRESH" for item in loan_assets):
+                    self.store.save_daily_snapshot("loan", loan_assets)
+            assets = loan_assets if source == "loan" else [*assets, *loan_assets]
         return _FetchAssetsResult(
             assets=_with_configured_tags(assets, config),
             provider_errors=provider_errors,

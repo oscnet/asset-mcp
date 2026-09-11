@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 
 
 @dataclass(frozen=True)
@@ -118,6 +119,20 @@ class ManualAccountConfig:
 
 
 @dataclass(frozen=True)
+class LoanAssetConfig:
+    """一笔需要从资产净值扣减的手工借贷记录。
+
+    输入：借贷人名称、资产代码、正数借贷数量及可选启用状态。
+    输出：供 Service 按组合实时单价生成负数量资产的不可变配置；本对象不执行交易。
+    """
+
+    borrower: str
+    symbol: str
+    quantity: Decimal
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
 class AppConfig:
     baseCurrency: str = "USD"
     rates: dict[str, float] = field(default_factory=lambda: {"USD": 1.0, "USDT": 1.0})
@@ -129,6 +144,7 @@ class AppConfig:
     onchainIndexer: OnchainIndexerConfig = field(default_factory=OnchainIndexerConfig)
     onchainAccounts: list[OnchainAccountConfig] = field(default_factory=list)
     manualAccounts: list[ManualAccountConfig] = field(default_factory=list)
+    loanAssets: list[LoanAssetConfig] = field(default_factory=list)
     assetTags: dict[str, tuple[str, ...]] = field(default_factory=dict)
     accountTags: dict[str, tuple[str, ...]] = field(default_factory=dict)
     walletTags: dict[str, tuple[str, ...]] = field(default_factory=dict)

@@ -121,6 +121,14 @@ manual:
           quantity: 2000000
           currency: CNY
 
+# Optional liabilities. Enter a positive quantity; Asset MCP emits a negative
+# asset valued from the current matching symbol price, then rates.SYMBOL.
+loans:
+  - borrower: Example borrower
+    symbol: BTC
+    quantity: 0.1
+    enabled: false
+
 # Optional labels used by allocation and Web filtering. Wallet targets use
 # the normalized accountId/wallet value returned by get_assets.
 tags:

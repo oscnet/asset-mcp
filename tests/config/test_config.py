@@ -126,6 +126,37 @@ def test_parse_config_normalizes_asset_account_and_wallet_tags():
     assert config.walletTags == {"onchain-main/Ledger": ("Cold Storage",)}
 
 
+def test_parse_config_supports_manual_loan_assets():
+    """输入借贷人、币种和数量；输出规范化且可停用的借贷配置。"""
+    config = parse_config(
+        {
+            "loans": [
+                {"borrower": "张三", "symbol": "btc", "quantity": "0.125"},
+                {"borrower": "李四", "symbol": "USDT", "quantity": 100, "enabled": False},
+            ]
+        }
+    )
+
+    assert config.loanAssets[0].borrower == "张三"
+    assert config.loanAssets[0].symbol == "BTC"
+    assert config.loanAssets[0].quantity == pytest.approx(0.125)
+    assert config.loanAssets[1].enabled is False
+
+
+@pytest.mark.parametrize("quantity", [0, -1, "bad"])
+def test_parse_config_rejects_invalid_loan_quantity(quantity):
+    """输入零数、负数或非法借贷数量；输出可操作的配置校验错误。"""
+    with pytest.raises(ConfigError, match=r"loans\[\].quantity"):
+        parse_config({"loans": [{"borrower": "张三", "symbol": "BTC", "quantity": quantity}]})
+
+
+@pytest.mark.parametrize("loans", [{"borrower": "张三"}, ["not-a-mapping"]])
+def test_parse_config_rejects_invalid_loan_collection(loans):
+    """输入非列表或包含非映射项的借贷配置；输出稳定的配置错误而非内部异常。"""
+    with pytest.raises(ConfigError, match="loans"):
+        parse_config({"loans": loans})
+
+
 def test_duplicate_account_ids_are_rejected():
     with pytest.raises(ConfigError, match="Duplicate account id"):
         parse_config(

@@ -12,14 +12,18 @@ mcp = FastMCP(
     instructions=(
         "Read-only personal asset aggregation server. It summarizes configured "
         "Binance, OKX, moomoo OpenD, Longbridge, IBKR, on-chain wallets, "
-        "and manual accounts in USD."
+        "manual accounts, and borrower-attributed loan liabilities in USD."
     ),
 )
 
 
 @mcp.tool()
 async def get_net_worth() -> dict[str, Any]:
-    """Return total net worth and summaries by category, source, account, and currency."""
+    """返回扣除借贷负债后的资产净值。
+
+    输入：无，读取全部已启用资产来源及手工借贷配置。
+    输出：美元净值及按类别、来源、账户和币种的汇总；借贷以负数量、负价值参与计算。
+    """
     return await _call_service("get_net_worth")
 
 
@@ -29,7 +33,11 @@ async def get_assets(
     accountId: str | None = None,
     category: str | None = None,
 ) -> dict[str, Any]:
-    """Return normalized assets, optionally filtered by source, accountId, or category."""
+    """返回标准化资产与借贷负债明细。
+
+    输入：可选来源、账户 ID 或类别过滤；``source=loan`` 只返回借贷负资产。
+    输出：资产列表、数量和同步状态；借贷行包含 ``borrower``、负数量及负美元价值。
+    """
     service = AssetService()
     try:
         return await service.get_assets_payload(

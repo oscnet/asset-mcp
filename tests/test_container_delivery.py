@@ -60,10 +60,12 @@ def test_docker_context_excludes_local_secrets_and_portfolio_data():
 
 
 def test_first_run_template_never_enables_sample_money():
-    """输入容器首次运行使用的配置模板；输出所有示例手工资产默认禁用的安全检查。"""
+    """输入首次运行配置模板；输出示例手工资产和借贷资产均默认禁用的安全检查。"""
     template = yaml.safe_load(
         (REPOSITORY / "src/asset_mcp/templates/config.local.yaml").read_text(encoding="utf-8")
     )
 
     assert template["manual"]["accounts"]
     assert all(account["enabled"] is False for account in template["manual"]["accounts"])
+    assert template["loans"]
+    assert all(loan["enabled"] is False for loan in template["loans"])

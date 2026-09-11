@@ -59,10 +59,12 @@ def test_streamlit_configuration_page_saves_manual_assets_without_secrets(monkey
         "账户 YAML",
         "钱包 YAML",
         "手工资产 YAML",
+        "借贷资产 YAML",
         "标签 YAML",
     ]
     assert all(not area.disabled for area in app.text_area)
     assert "manual:" in app.text_area[2].value
+    assert "loans:" in app.text_area[3].value
     app.text_area[2].set_value(
         """
 manual:
@@ -82,3 +84,52 @@ manual:
     assert app.success[-1].value == "配置已安全保存，刷新资产总览后生效。"
     saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     assert saved["manual"]["accounts"][0]["assets"][0]["quantity"] == 88
+
+
+def test_streamlit_loan_editor_reduces_dashboard_assets(monkeypatch, tmp_path):
+    """输入配置中心借贷记录；输出保存成功且总览明细出现借贷人和负数量资产。"""
+    repository = Path(__file__).resolve().parents[2]
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+baseCurrency: USD
+rates: {USD: 1, BTC: 50000}
+manual:
+  accounts:
+    - id: btc-manual
+      label: BTC
+      category: crypto
+      assets:
+        - symbol: BTC
+          quantity: 2
+          currency: BTC
+loans: []
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ASSET_MCP_CONFIG", str(config_path))
+    monkeypatch.setenv("ASSET_MCP_DATABASE", str(tmp_path / "portfolio.db"))
+    app = AppTest.from_file(
+        str(repository / "src/asset_mcp/web/app.py"),
+        default_timeout=20,
+    ).run()
+
+    app.sidebar.radio[0].set_value("配置中心").run()
+    app.text_area[3].set_value(
+        """
+loans:
+  - borrower: 张三
+    symbol: BTC
+    quantity: 0.5
+"""
+    )
+    app.button[0].click().run()
+    app.sidebar.radio[0].set_value("资产总览").run()
+
+    assert not app.exception
+    assert any("$75,000.00" in block.value for block in app.markdown)
+    rows = app.dataframe[-1].value
+    loan = rows.loc[rows["借贷人"] == "张三"].iloc[0]
+    assert loan["币种"] == "BTC"
+    assert loan["数量"] == -0.5
+    assert loan["价值 (USD)"] == -25000

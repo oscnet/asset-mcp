@@ -26,6 +26,7 @@ EXPORT_FIELDS = (
     "syncStatus",
     "updatedAt",
     "tags",
+    "borrower",
 )
 
 

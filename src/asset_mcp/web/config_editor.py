@@ -15,6 +15,7 @@ SECTION_KEYS = {
     "accounts": ("exchanges", "brokers"),
     "wallets": ("onchain",),
     "manual": ("manual",),
+    "loans": ("loans",),
     "tags": ("tags",),
 }
 
@@ -43,14 +44,18 @@ def load_editable_config(path: str | Path) -> dict[str, Any]:
 
 
 def build_editable_sections(document: dict[str, Any]) -> dict[str, str]:
-    """把完整配置拆成四个受控 YAML 编辑区。
+    """把完整配置拆成五个受控 YAML 编辑区。
 
     输入：已确认不含秘密的原始配置字典。
-    输出：账户、钱包、手工资产、标签四段 YAML；基础币种与汇率留在原文档中不变。
+    输出：账户、钱包、手工资产、借贷资产、标签五段 YAML；基础币种与汇率留在原文档
+    中不变。缺失的借贷配置显示为空列表，便于直接添加条目。
     """
     sections: dict[str, str] = {}
     for section, keys in SECTION_KEYS.items():
-        value = {key: deepcopy(document.get(key, {})) for key in keys}
+        value = {
+            key: deepcopy(document.get(key, [] if key == "loans" else {}))
+            for key in keys
+        }
         sections[section] = yaml.safe_dump(value, allow_unicode=True, sort_keys=False)
     return sections
 
@@ -62,7 +67,7 @@ def save_editable_sections(
 ) -> Path:
     """校验并原子保存 Web 编辑的配置分区。
 
-    输入：目标路径、加载时的完整原文档和四个受控 YAML 分区文本。
+    输入：目标路径、加载时的完整原文档和五个受控 YAML 分区文本。
     输出：成功写入的 ``Path``；语法错误、越界字段、明文秘密或领域配置校验失败时抛出
     ``ConfigError``，并保证原文件不被替换。新文件权限固定为 0600。
     """
@@ -70,7 +75,7 @@ def save_editable_sections(
     for section, allowed_keys in SECTION_KEYS.items():
         parsed = _parse_section(section, sections.get(section, ""), allowed_keys)
         for key in allowed_keys:
-            document[key] = parsed.get(key, {})
+            document[key] = parsed.get(key, [] if key == "loans" else {})
     if _contains_inline_secret(document):
         raise ConfigError("Inline credentials are forbidden; use credentialRef.")
     parse_config(document)

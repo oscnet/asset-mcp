@@ -28,6 +28,7 @@ def test_portfolio_exports_create_machine_readable_csv_and_json():
         "syncStatus": "FRESH",
         "updatedAt": "2026-09-09T00:00:00Z",
         "tags": ["Core", "Personal"],
+        "borrower": "张三",
         "apiKey": "must-not-leak",
         "rawSource": "private-debug-field",
     }
@@ -47,6 +48,7 @@ def test_portfolio_exports_create_machine_readable_csv_and_json():
     assert json_payload["count"] == 1
     assert json_payload["totalValueUsd"] == 30000
     assert json_payload["assets"][0]["tags"] == ["Core", "Personal"]
+    assert json_payload["assets"][0]["borrower"] == "张三"
     assert json_payload["assets"][0]["name"].startswith("=HYPERLINK")
     assert "apiKey" not in json_payload["assets"][0]
     assert "rawSource" not in json_payload["assets"][0]

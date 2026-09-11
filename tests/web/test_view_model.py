@@ -87,6 +87,7 @@ def test_drilldown_view_builds_cascading_options_and_filtered_rows():
             "账户": "ledger",
             "类型": "钱包",
             "位置": "链上自托管",
+            "借贷人": "—",
             "数量": 1,
             "价值 (USD)": 30000,
             "状态": "实时",
@@ -114,6 +115,23 @@ def test_drilldown_view_localizes_all_sync_statuses():
     view = build_drilldown_view(assets, {})
 
     assert [row["状态"] for row in view["rows"]] == ["实时", "缓存", "异常"]
+
+
+def test_drilldown_view_displays_loan_borrower():
+    """输入借贷负资产；输出中文来源、负债类型和借贷人。"""
+    asset = {
+        **_asset("BTC", "loan", "loan-1", "liability", "loan", -30000),
+        "borrower": "张三",
+        "quantity": -0.5,
+    }
+
+    row = build_drilldown_view([asset], {})["rows"][0]
+
+    assert row["平台"] == "借贷负债"
+    assert row["类型"] == "负债"
+    assert row["位置"] == "借贷中"
+    assert row["借贷人"] == "张三"
+    assert row["数量"] == -0.5
 
 
 def _asset(symbol, source, account_id, account_type, location, value_usd):

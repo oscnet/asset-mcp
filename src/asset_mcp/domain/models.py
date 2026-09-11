@@ -5,8 +5,10 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Literal
 
-AssetCategory = Literal["crypto", "stock", "cash", "manual"]
-AssetSource = Literal["binance", "okx", "moomoo", "longbridge", "ibkr", "manual", "onchain"]
+AssetCategory = Literal["crypto", "stock", "cash", "manual", "liability"]
+AssetSource = Literal[
+    "binance", "okx", "moomoo", "longbridge", "ibkr", "manual", "onchain", "loan"
+]
 DecimalLike = Decimal | str | int | float
 SyncStatus = Literal["FRESH", "STALE", "ERROR"]
 RiskLevel = Literal["Low", "Medium", "High"]
@@ -40,6 +42,7 @@ class Asset:
     strategy: str | None = None
     riskLevel: RiskLevel | None = None
     tags: tuple[str, ...] = ()
+    borrower: str | None = None
 
     def __post_init__(self) -> None:
         """把 Provider 传入的数字统一为有限 Decimal。

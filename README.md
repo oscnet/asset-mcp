@@ -19,6 +19,7 @@ does not trade, transfer, withdraw, or automate bank/Alipay access.
 - On-chain wallet addresses for BTC, ETH, SOL, BSC, TRON, Polygon, Avalanche,
   Arbitrum, Base, and Optimism.
 - Manual assets for banks, Alipay, cash, property, and other offline accounts.
+- Borrower-attributed loan liabilities deducted by same-symbol quantity and price.
 - USD-denominated net worth summaries.
 - Dashboard-ready grouped data for AI-generated charts.
 
@@ -158,7 +159,7 @@ buttons download the currently filtered rows as Excel-friendly CSV or
 schema-versioned JSON; both formats use a strict safe-field allowlist.
 
 Use **配置中心** in the sidebar to edit account metadata, public wallet
-addresses, manual assets, and tags. The editor refuses inline secrets and
+addresses, manual assets, loan liabilities, and tags. The editor refuses inline secrets and
 only accepts `credentialRef`; it validates the complete configuration before
 atomically replacing the local YAML file.
 
@@ -391,6 +392,27 @@ tags:
   wallets:
     onchain-main/Ledger ETH: [Cold Storage]
 ```
+
+### Loan liabilities
+
+Add assets lent to a borrower under `loans`. Enter `quantity` as a positive
+number. Asset MCP creates a read-only negative asset with source `loan`, records
+the borrower, and subtracts its quantity and USD value from portfolio net worth.
+It uses a current positive holding with the same `symbol` for pricing, preferring
+fresh data; if none exists, it falls back to `rates.SYMBOL`. A loan without any
+price remains visible with `syncStatus: ERROR` and zero USD value.
+
+```yaml
+loans:
+  - borrower: Alice
+    symbol: BTC
+    quantity: 0.25
+    enabled: true
+```
+
+The Web configuration center exposes the same section under **借贷资产**. This
+feature only records and values a liability; it never initiates a loan, transfer,
+repayment, or other asset-moving action.
 
 ## Run the MCP Server
 

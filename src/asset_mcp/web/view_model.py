@@ -89,6 +89,7 @@ _DIMENSION_LABELS = {
         "okx": "OKX",
         "onchain": "链上钱包",
         "manual": "手工资产",
+        "loan": "借贷负债",
         "moomoo": "富途 moomoo",
         "longbridge": "长桥",
         "ibkr": "盈透证券",
@@ -100,12 +101,14 @@ _DIMENSION_LABELS = {
         "wallet": "钱包",
         "manual": "手工录入",
         "brokerage": "证券账户",
+        "liability": "负债",
     },
     "location": {
         "binance": "Binance",
         "okx": "OKX",
         "self_custody": "链上自托管",
         "manual": "手工录入",
+        "loan": "借贷中",
     },
 }
 
@@ -141,6 +144,7 @@ def build_drilldown_view(
             "账户": _dimension_value(asset, "accountId"),
             "类型": _dimension_value(asset, "accountType"),
             "位置": _dimension_value(asset, "location"),
+            "借贷人": str(asset.get("borrower") or "—"),
             "数量": asset.get("quantity", 0),
             "价值 (USD)": asset.get("valueUsd", 0),
             "状态": _sync_status_label(asset.get("syncStatus")),

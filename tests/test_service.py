@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import pytest
 
 import asset_mcp.service as service_module
-from asset_mcp.config import AppConfig
+from asset_mcp.config import AppConfig, LoanAssetConfig
 from asset_mcp.domain.models import AccountStatus, Asset, Position
 from asset_mcp.providers.base import PartialAssetFetchError
 from asset_mcp.service import AssetService
@@ -109,6 +110,74 @@ async def test_assets_payload_includes_partial_metadata(monkeypatch):
     assert result["assets"][0]["accountId"] == "manual-main"
     assert result["providerErrors"][0]["source"] == "ibkr"
     assert result["providerErrors"][0]["code"] == "provider_timeout"
+
+
+@pytest.mark.asyncio
+async def test_loan_asset_reduces_net_worth_and_is_saved_in_daily_snapshot(monkeypatch, tmp_path):
+    """输入 2 BTC 资产和借出 0.5 BTC；输出净值按 1.5 BTC 计算并保存借贷负快照。"""
+    monkeypatch.setattr(
+        service_module,
+        "build_provider_entries",
+        lambda config, source=None: [("binance", _StaticProvider([_priced_btc_asset()]))],
+    )
+    config = AppConfig(
+        loanAssets=[LoanAssetConfig(borrower="张三", symbol="BTC", quantity=Decimal("0.5"))]
+    )
+    store = PortfolioStore(tmp_path / "portfolio.db")
+
+    result = await AssetService(config, store=store).get_net_worth()
+
+    by_source = {row["key"]: row["valueUsd"] for row in result["bySource"]}
+    assert result["totalValueUsd"] == 75000
+    assert by_source == {"binance": 100000, "loan": -25000}
+    assert sum(asset.valueUsd for asset in store.load_snapshot(
+        datetime.now(timezone.utc).date().isoformat()
+    )) == 75000
+
+
+@pytest.mark.asyncio
+async def test_loan_asset_payload_exposes_borrower_and_negative_quantity(monkeypatch):
+    """输入借贷配置与 BTC 报价；输出 MCP 资产明细包含借贷人和负数量。"""
+    monkeypatch.setattr(
+        service_module,
+        "build_provider_entries",
+        lambda config, source=None: [("binance", _StaticProvider([_priced_btc_asset()]))],
+    )
+    config = AppConfig(
+        loanAssets=[LoanAssetConfig(borrower="张三", symbol="BTC", quantity=Decimal("0.5"))]
+    )
+
+    result = await AssetService(config, store=None).get_assets_payload()
+
+    loan = next(asset for asset in result["assets"] if asset["source"] == "loan")
+    assert loan["borrower"] == "张三"
+    assert loan["symbol"] == "BTC"
+    assert loan["quantity"] == -0.5
+    assert loan["valueUsd"] == -25000
+
+
+@pytest.mark.asyncio
+async def test_loan_source_filter_fetches_prices_but_returns_only_liabilities(monkeypatch):
+    """输入 loan 来源过滤；输出读取组合报价、仅返回借贷负资产。"""
+    requested_sources = []
+
+    def entries(_config, source=None):
+        """输入配置和 Provider 过滤；输出 BTC 报价 Provider 并记录过滤值。"""
+        requested_sources.append(source)
+        return [("binance", _StaticProvider([_priced_btc_asset()]))]
+
+    monkeypatch.setattr(service_module, "build_provider_entries", entries)
+    config = AppConfig(
+        loanAssets=[
+            LoanAssetConfig(borrower="张三", symbol="BTC", quantity=Decimal("0.5"))
+        ]
+    )
+
+    result = await AssetService(config, store=None).get_assets_payload(source="loan")
+
+    assert requested_sources == [None]
+    assert result["count"] == 1
+    assert result["assets"][0]["source"] == "loan"
 
 
 @pytest.mark.asyncio
@@ -443,6 +512,22 @@ class _StaticProvider:
     async def health_check(self) -> list[AccountStatus]:
         """输入无；输出单个健康的链上测试账户状态。"""
         return [AccountStatus("onchain", "wallet-main", "Wallet", True, True, "ok")]
+
+
+def _priced_btc_asset() -> Asset:
+    """输入无；输出 2 BTC、单价 50,000 美元的确定性报价资产。"""
+    return Asset(
+        source="binance",
+        accountId="binance-main",
+        accountLabel="Binance",
+        category="crypto",
+        symbol="BTC",
+        quantity=2,
+        currency="BTC",
+        unitPriceUsd=50000,
+        valueUsd=100000,
+        updatedAt="2026-09-11T00:00:00Z",
+    )
 
 
 class _PartialOnchainProvider(_StaticProvider):

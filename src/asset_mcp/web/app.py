@@ -138,7 +138,8 @@ def _render_configuration(st: Any) -> None:
     """渲染不接触凭据保险库的 YAML 配置中心。
 
     输入：Streamlit 模块，以及 ``ASSET_MCP_CONFIG`` 解析出的当前本地配置路径。
-    输出：账户、钱包、手工资产和标签四个受控编辑区；提交时原子保存，错误时保留原文件。
+    输出：账户、钱包、手工资产、借贷资产和标签五个受控编辑区；提交时原子保存，
+    错误时保留原文件。
     """
     path = default_config_path()
     _render_section_title(st, "设置", "配置中心", "管理账户、钱包与资产标签")
@@ -155,8 +156,8 @@ def _render_configuration(st: Any) -> None:
         return
 
     with st.form("configuration_editor"):
-        account_tab, wallet_tab, manual_tab, tag_tab = st.tabs(
-            ["账户", "钱包", "手工资产", "标签"]
+        account_tab, wallet_tab, manual_tab, loan_tab, tag_tab = st.tabs(
+            ["账户", "钱包", "手工资产", "借贷资产", "标签"]
         )
         with account_tab:
             accounts = st.text_area(
@@ -174,6 +175,16 @@ def _render_configuration(st: Any) -> None:
             )
         with manual_tab:
             manual = st.text_area("手工资产 YAML", sections["manual"], height=360)
+        with loan_tab:
+            loans = st.text_area(
+                "借贷资产 YAML",
+                sections["loans"],
+                height=360,
+                help=(
+                    "每条记录填写 borrower、symbol、quantity；数量必须为正数，"
+                    "系统会自动作为负资产从净值扣减。"
+                ),
+            )
         with tag_tab:
             tags = st.text_area(
                 "标签 YAML",
@@ -193,6 +204,7 @@ def _render_configuration(st: Any) -> None:
                 "accounts": accounts,
                 "wallets": wallets,
                 "manual": manual,
+                "loans": loans,
                 "tags": tags,
             },
         )
@@ -320,6 +332,7 @@ def _localized_allocation_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any
         "fund": "基金",
         "property": "房产",
         "commodity": "大宗商品",
+        "liability": "借贷负债",
     }
     return [
         {
@@ -340,6 +353,7 @@ def _localized_location_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
         "binance": "Binance",
         "okx": "OKX",
         "onchain": "链上钱包",
+        "loan": "借贷负债",
         "manual": "手工资产",
         "moomoo": "富途 moomoo",
         "longbridge": "长桥",

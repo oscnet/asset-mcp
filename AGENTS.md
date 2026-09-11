@@ -3,8 +3,8 @@
 ## Project Overview
 
 Asset MCP is a read-only Python MCP server for aggregating personal asset data
-across Binance, OKX, moomoo OpenD, Longbridge, IBKR, on-chain wallets, and
-manually configured accounts.
+across Binance, OKX, moomoo OpenD, Longbridge, IBKR, on-chain wallets, manually
+configured accounts, and manually recorded loan liabilities.
 It exposes normalized asset data, USD-denominated net worth summaries, and
 dashboard-ready grouping data to MCP-compatible clients.
 
@@ -32,6 +32,8 @@ perform any other asset-moving operation.
   timeout dispatch, and the thread-vs-subprocess decision.
 - `src/asset_mcp/domain/aggregation.py`: asset grouping and summary logic.
 - `src/asset_mcp/domain/models.py`: normalized domain models.
+- `src/asset_mcp/domain/loans.py`: converts positive loan configuration into
+  borrower-attributed negative assets using current same-symbol prices.
 - `src/asset_mcp/config/`: YAML config parsing, config models, validation, and
   redaction.
 - `src/asset_mcp/templates/config.local.yaml`: the template `asset-mcp init`
@@ -101,6 +103,8 @@ ASSET_MCP_CONFIG=config.example.yaml uv run asset-mcp
 - Keep compatibility re-export modules small; platform implementation should
   live in the grouped provider package.
 - Keep provider integrations read-only.
+- Keep loan liabilities read-only: configuration may record borrower, symbol,
+  quantity, and enabled state, but must never initiate lending, transfers, or repayment.
 - Preserve normalized response shapes used by MCP tools unless the
   caller-facing contract is intentionally changed and tests are updated.
 - Add or update tests for behavior changes, provider parsing changes, config

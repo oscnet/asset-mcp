@@ -48,7 +48,7 @@ def test_load_editable_config_rejects_legacy_inline_secrets(tmp_path):
 
 
 def test_save_sections_validates_and_atomically_writes_supported_groups(tmp_path):
-    """输入四个受控配置分区；输出权限为 0600、可重新解析且包含标签的新配置文件。"""
+    """输入五个受控配置分区；输出权限为 0600、可解析且包含借贷的新配置文件。"""
     path = tmp_path / "config.yaml"
     path.write_text("baseCurrency: USD\nrates: {USD: 1}\n", encoding="utf-8")
     document = load_editable_config(path)
@@ -83,6 +83,12 @@ manual:
           quantity: 100
           currency: USD
 """,
+        "loans": """
+loans:
+  - borrower: 张三
+    symbol: BTC
+    quantity: 0.25
+""",
         "tags": """
 tags:
   assets:
@@ -100,6 +106,7 @@ tags:
     assert saved == path
     assert raw["tags"]["assets"]["BTC"] == ["Core"]
     assert raw["manual"]["accounts"][0]["id"] == "cash"
+    assert raw["loans"][0] == {"borrower": "张三", "symbol": "BTC", "quantity": 0.25}
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from asset_mcp.config.models import (
     BinanceAccountConfig,
     IbkrAccountConfig,
     LongbridgeAccountConfig,
+    LoanAssetConfig,
     ManualAccountConfig,
     ManualAssetConfig,
     MoomooAccountConfig,
@@ -22,7 +24,7 @@ from asset_mcp.config.models import (
     OnchainTokenConfig,
 )
 from asset_mcp.config.validation import validate_unique_account_ids
-from asset_mcp.domain.models import normalize_tags
+from asset_mcp.domain.models import decimal_amount, normalize_tags
 
 
 def default_user_config_path() -> Path:
@@ -78,7 +80,12 @@ def parse_config(raw: dict[str, Any]) -> AppConfig:
     brokers = raw.get("brokers") or {}
     onchain = raw.get("onchain") or {}
     manual = raw.get("manual") or {}
+    loans = raw.get("loans") or []
     tags = raw.get("tags") or {}
+    if not isinstance(loans, list):
+        raise ConfigError("loans must be a list.")
+    if any(not isinstance(item, dict) for item in loans):
+        raise ConfigError("Each loans[] item must be a mapping.")
 
     binance_accounts = [
         BinanceAccountConfig(
@@ -230,6 +237,16 @@ def parse_config(raw: dict[str, Any]) -> AppConfig:
         for item in manual.get("accounts", [])
     ]
 
+    loan_assets = [
+        LoanAssetConfig(
+            borrower=_required_str(item, "borrower", "loans[]").strip(),
+            symbol=_required_str(item, "symbol", "loans[]").strip().upper(),
+            quantity=_as_positive_decimal(item.get("quantity"), "loans[].quantity"),
+            enabled=bool(item.get("enabled", True)),
+        )
+        for item in loans
+    ]
+
     config = AppConfig(
         baseCurrency=str(raw.get("baseCurrency", "USD")).upper(),
         rates=rates,
@@ -241,6 +258,7 @@ def parse_config(raw: dict[str, Any]) -> AppConfig:
         onchainIndexer=onchain_indexer,
         onchainAccounts=onchain_accounts,
         manualAccounts=manual_accounts,
+        loanAssets=loan_assets,
         assetTags=_tag_map(tags.get("assets"), uppercase_keys=True),
         accountTags=_tag_map(tags.get("accounts")),
         walletTags=_tag_map(tags.get("wallets")),
@@ -265,6 +283,22 @@ def _as_float(value: Any, location: str) -> float:
         return float(value)
     except (TypeError, ValueError) as exc:
         raise ConfigError(f"Expected number at {location}.") from exc
+
+
+def _as_positive_decimal(value: Any, location: str) -> Decimal:
+    """解析配置中的正数精确数量。
+
+    输入：YAML 数值或十进制字符串，以及用于错误提示的字段路径。
+    输出：大于零的有限 ``Decimal``；零、负数和非法值统一抛出包含字段路径的
+    ``ConfigError``，避免借贷方向由正负号产生歧义。
+    """
+    try:
+        result = decimal_amount(value)
+    except ValueError as exc:
+        raise ConfigError(f"Expected positive number at {location}.") from exc
+    if result <= 0:
+        raise ConfigError(f"Expected positive number at {location}.")
+    return result
 
 
 def _optional_int(value: Any) -> int | None:
