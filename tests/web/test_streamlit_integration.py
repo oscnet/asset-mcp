@@ -29,7 +29,7 @@ def test_streamlit_home_supports_symbol_drilldown(monkeypatch, tmp_path):
     app.selectbox[0].select("HOME").run()
 
     assert not app.exception
-    assert app.caption[-2].value == "1 assets · $276,000.00"
+    assert app.caption[-2].value == "1 项资产 · 合计 $276,000.00"
     assert app.dataframe[-1].value.iloc[0]["账户"] == "property-home"
     assert [button.label for button in app.get("download_button")] == [
         "导出当前结果 · CSV",

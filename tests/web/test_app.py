@@ -35,7 +35,7 @@ def test_main_renders_complete_dashboard_with_streamlit_contract(monkeypatch):
             "assetAllocation": [{"label": "crypto", "valueUsd": 1}],
             "locationAllocation": [{"label": "binance", "valueUsd": 1}],
             "topAssets": [{"symbol": "BTC", "valueUsd": 1}],
-            "warnings": [{"code": "test", "message": "review"}],
+            "warnings": [{"code": "stale_data", "message": "ignored raw message"}],
             "drilldown": {
                 "assets": [],
                 "options": {},
@@ -48,13 +48,21 @@ def test_main_renders_complete_dashboard_with_streamlit_contract(monkeypatch):
 
     app_module.main()
 
-    assert streamlit.page_config["page_title"].startswith("Asset MCP")
+    assert streamlit.page_config["page_title"] == "个人资产中枢 · Asset MCP"
     assert streamlit.sidebar.selection == "资产总览"
     assert streamlit.line_chart_calls == 1
     assert streamlit.bar_chart_calls == 1
     assert streamlit.dataframe_calls == 2
     assert streamlit.dataframe_widths == ["stretch", "stretch"]
-    assert streamlit.warnings == ["test: review"]
+    rendered = "\n".join(streamlit.markdowns)
+    assert "个人资产<em>中枢</em>" in rendered
+    assert "净值趋势" in rendered
+    assert "资产配置" in rendered
+    assert "存放位置" in rendered
+    assert "核心持仓" in rendered
+    assert "风险提示" in rendered
+    assert "Net worth trajectory" not in rendered
+    assert streamlit.warnings == ["数据时效：部分资产使用历史缓存，请检查对应数据来源。"]
 
 
 def test_render_exports_registers_csv_and_json_downloads():
@@ -121,14 +129,16 @@ class _FakeStreamlit:
         self.dataframe_widths = []
         self.warnings = []
         self.downloads = []
+        self.markdowns = []
         self.sidebar = _FakeSidebar()
 
     def set_page_config(self, **kwargs):
         """输入页面配置；输出无并保存配置。"""
         self.page_config = kwargs
 
-    def markdown(self, *_args, **_kwargs):
-        """输入 Markdown 与选项；输出无。"""
+    def markdown(self, body, *_args, **_kwargs):
+        """输入 Markdown 与选项；输出无并保存渲染内容。"""
+        self.markdowns.append(body)
 
     def columns(self, spec, **_kwargs):
         """输入列数量或权重；输出可用作上下文的模拟列。"""

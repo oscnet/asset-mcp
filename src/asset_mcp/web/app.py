@@ -48,23 +48,24 @@ def main() -> None:
     import streamlit as st
 
     st.set_page_config(
-        page_title="Asset MCP · Portfolio Observatory",
+        page_title="个人资产中枢 · Asset MCP",
         page_icon="◈",
         layout="wide",
         initial_sidebar_state="expanded",
     )
     st.markdown(_STYLES, unsafe_allow_html=True)
     page = st.sidebar.radio(
-        "Workspace",
+        "工作区",
         ["资产总览", "配置中心"],
         help="配置页只处理非敏感 YAML；API 密钥仍保存在凭据保险库。",
     )
     st.markdown(
         """
         <header class="masthead">
-          <div><span class="eyebrow">PERSONAL ASSET DATA PLATFORM</span>
-          <h1>Portfolio <em>Observatory</em></h1></div>
-          <div class="readonly">READ ONLY · LOCAL FIRST</div>
+          <div><span class="eyebrow">个人资产数据工作台</span>
+          <h1>个人资产<em>中枢</em></h1>
+          <p>聚合账户、链上钱包与持仓风险，一处掌握资产全貌。</p></div>
+          <div class="readonly"><i></i> 只读访问 · 本地优先</div>
         </header>
         """,
         unsafe_allow_html=True,
@@ -75,40 +76,62 @@ def main() -> None:
     try:
         model = asyncio.run(load_home_model())
     except Exception as exc:  # noqa: BLE001
-        st.error(f"Dashboard data unavailable: {exc.__class__.__name__}")
-        st.info("Check the local config, credentialRef, and source health, then refresh.")
+        st.error(f"资产数据加载失败（{exc.__class__.__name__}）")
+        st.info("请检查本地配置、credentialRef 和数据来源健康状态，然后刷新页面。")
         return
     _render_metrics(st, model["metrics"])
     left, right = st.columns([1.45, 1], gap="large")
     with left:
-        st.markdown("### Net worth trajectory")
+        _render_section_title(st, "01", "净值趋势", "最近 30 天资产变化")
         if model["history"]:
-            st.line_chart(model["history"], x="date", y="totalValueUsd", height=330)
+            history_rows = [
+                {"日期": row.get("date"), "资产净值（USD）": row.get("totalValueUsd")}
+                for row in model["history"]
+            ]
+            st.line_chart(history_rows, x="日期", y="资产净值（USD）", height=330)
         else:
-            st.info("History appears after the first two daily snapshots.")
+            st.info("生成至少两份每日快照后，这里将显示净值趋势。")
     with right:
-        st.markdown("### Asset allocation")
+        _render_section_title(st, "02", "资产配置", "按资产类别观察分布")
         if model["assetAllocation"]:
             st.bar_chart(
-                model["assetAllocation"],
-                x="label",
-                y="valueUsd",
+                _localized_allocation_rows(model["assetAllocation"]),
+                x="资产类别",
+                y="资产价值（USD）",
                 height=330,
             )
         else:
-            st.info("No valued assets yet.")
+            st.info("暂时没有可估值资产。")
     lower_left, lower_right = st.columns(2, gap="large")
     with lower_left:
-        st.markdown("### Location exposure")
-        st.dataframe(model["locationAllocation"], width="stretch", hide_index=True)
+        _render_section_title(st, "03", "存放位置", "资产托管与平台分布")
+        st.dataframe(
+            _localized_location_rows(model["locationAllocation"]),
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "label": "平台 / 位置",
+                "valueUsd": "资产价值（USD）",
+                "assetCount": "资产项数",
+            },
+        )
     with lower_right:
-        st.markdown("### Largest positions")
-        st.dataframe(model["topAssets"], width="stretch", hide_index=True)
+        _render_section_title(st, "04", "核心持仓", "按美元价值从高到低")
+        st.dataframe(
+            model["topAssets"],
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "symbol": "资产",
+                "valueUsd": "资产价值（USD）",
+                "percentage": "组合占比",
+            },
+        )
     _render_drilldown(st, model["drilldown"])
     if model["warnings"]:
-        st.markdown("### Risk signals")
+        _render_section_title(st, "06", "风险提示", "需要留意的组合信号")
         for warning in model["warnings"]:
-            st.warning(f"{warning.get('code', 'risk')}: {warning.get('message', '')}")
+            st.warning(_localized_warning(warning))
 
 
 def _render_configuration(st: Any) -> None:
@@ -118,7 +141,7 @@ def _render_configuration(st: Any) -> None:
     输出：账户、钱包、手工资产和标签四个受控编辑区；提交时原子保存，错误时保留原文件。
     """
     path = default_config_path()
-    st.markdown("### Configuration studio")
+    _render_section_title(st, "设置", "配置中心", "管理账户、钱包与资产标签")
     st.caption(str(path))
     st.info(
         "这里只保存非敏感配置。API Key、Secret、Passphrase 和 Token 必须通过 "
@@ -185,10 +208,10 @@ def _render_drilldown(st: Any, initial_view: dict[str, Any]) -> None:
     输入：Streamlit 模块与含原始资产的初始下钻 ViewModel。
     输出：无返回值；按币种、平台、账户、类型、位置级联筛选并显示价值合计。
     """
-    st.markdown("### Portfolio drilldown")
+    _render_section_title(st, "05", "资产明细", "从币种逐级筛选到存放位置")
     assets = initial_view["assets"]
     if not assets:
-        st.info("No asset details available.")
+        st.info("暂无资产明细。")
         return
     selections: dict[str, str] = {}
     columns = st.columns(5, gap="small")
@@ -203,7 +226,7 @@ def _render_drilldown(st: Any, initial_view: dict[str, Any]) -> None:
         if selected != "全部":
             selections[dimension] = selected
     view = build_drilldown_view(assets, selections)
-    st.caption(f"{len(view['rows'])} assets · ${view['totalValueUsd']:,.2f}")
+    st.caption(f"{len(view['rows'])} 项资产 · 合计 ${view['totalValueUsd']:,.2f}")
     st.dataframe(view["rows"], width="stretch", hide_index=True)
     _render_exports(st, view["filteredAssets"])
 
@@ -215,7 +238,7 @@ def _render_exports(st: Any, assets: list[dict[str, Any]]) -> None:
     输出：无返回值；生成两个只含白名单字段的内存下载，不在服务器写临时导出文件。
     """
     exports = build_portfolio_exports(assets)
-    st.caption("EXPORT CURRENT VIEW · SAFE FIELD ALLOWLIST")
+    st.caption("导出当前筛选结果 · 仅包含安全字段")
     csv_column, json_column = st.columns(2, gap="small")
     with csv_column:
         st.download_button(
@@ -243,11 +266,20 @@ def _render_metrics(st: Any, metrics: list[dict[str, str]]) -> None:
     """
     for offset in (0, 4):
         columns = st.columns(4, gap="medium")
-        for column, metric in zip(columns, metrics[offset : offset + 4]):
+        for index, (column, metric) in enumerate(
+            zip(columns, metrics[offset : offset + 4]),
+            start=offset,
+        ):
             with column:
+                state_class = (
+                    " is-alert"
+                    if metric["id"] == "sync_status" and metric["value"] != "数据正常"
+                    else ""
+                )
                 column.markdown(
                     f"""
-                    <section class="metric-card metric-{escape(metric['id'])}">
+                    <section class="metric-card metric-{escape(metric['id'])}{state_class}"
+                      style="--delay:{index * 45}ms">
                       <span>{escape(metric['label'])}</span>
                       <strong>{escape(metric['value'])}</strong>
                       <small>{escape(metric['detail'])}</small>
@@ -257,24 +289,135 @@ def _render_metrics(st: Any, metrics: list[dict[str, str]]) -> None:
                 )
 
 
+def _render_section_title(st: Any, index: str, title: str, subtitle: str) -> None:
+    """渲染统一的中文内容区标题。
+
+    输入：Streamlit 模块、章节序号、主标题和辅助说明；所有文本都会进行 HTML 转义。
+    输出：无返回值；向页面写入带稳定 class 的标题结构，供主题样式统一控制。
+    """
+    st.markdown(
+        f"""
+        <div class="section-title">
+          <span>{escape(index)}</span>
+          <div><h2>{escape(title)}</h2><p>{escape(subtitle)}</p></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _localized_allocation_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """本地化资产配置图的类别标签。
+
+    输入：包含 ``label``、``valueUsd`` 等字段的配置图行。
+    输出：使用“资产类别”“资产价值（USD）”中文字段的新列表，常见类别翻译为中文，
+    未知类别保留原值；原输入不会被修改。
+    """
+    labels = {
+        "crypto": "加密资产",
+        "cash": "现金",
+        "stock": "股票",
+        "fund": "基金",
+        "property": "房产",
+        "commodity": "大宗商品",
+    }
+    return [
+        {
+            "资产类别": labels.get(str(row.get("label")), row.get("label")),
+            "资产价值（USD）": row.get("valueUsd", 0),
+        }
+        for row in rows
+    ]
+
+
+def _localized_location_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """规范化存放位置表中的平台名称。
+
+    输入：Dashboard 按来源聚合的表格行。输出：字段结构不变的新列表，内置来源显示为
+    中文名称或规范品牌名，未知来源保留原值；原输入不会被修改。
+    """
+    labels = {
+        "binance": "Binance",
+        "okx": "OKX",
+        "onchain": "链上钱包",
+        "manual": "手工资产",
+        "moomoo": "富途 moomoo",
+        "longbridge": "长桥",
+        "ibkr": "盈透证券",
+    }
+    return [{**row, "label": labels.get(str(row.get("label")), row.get("label"))} for row in rows]
+
+
+def _localized_warning(warning: dict[str, Any]) -> str:
+    """把领域层风险代码转换为简洁中文提醒。
+
+    输入：包含稳定 ``code`` 和可选原始 ``message`` 的风险字典。
+    输出：已知风险返回完整中文标题与处理提示；未知代码使用“风险提醒”和原始说明，
+    不改变 MCP 领域层的稳定英文契约。
+    """
+    known = {
+        "asset_concentration": "资产集中度：单一资产占比超过 50%，请关注价格波动风险。",
+        "cex_concentration": "平台集中度：中心化交易所托管占比超过 50%，请关注平台风险。",
+        "high_leverage": "杠杆风险：存在至少 5 倍杠杆持仓，请关注强平距离。",
+        "stale_data": "数据时效：部分资产使用历史缓存，请检查对应数据来源。",
+    }
+    code = str(warning.get("code") or "")
+    if code in known:
+        return known[code]
+    return f"风险提醒：{warning.get('message') or '请检查当前组合。'}"
+
+
 _STYLES = """
 <style>
-:root { --ink:#111412; --panel:#191d1a; --line:#31372f; --amber:#f5b942; --mint:#7de2bd; --paper:#e9eadf; }
-.stApp { background: radial-gradient(circle at 82% -8%, #293328 0, #111412 38%); color:var(--paper); font-family:'Avenir Next Condensed','Trebuchet MS',sans-serif; }
-.block-container { max-width:1440px; padding:2.2rem 3rem 4rem; }
-.masthead { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:1px solid var(--line); padding-bottom:1.4rem; margin-bottom:1.6rem; }
-.eyebrow,.readonly { color:var(--mint); font:500 .72rem Menlo,monospace; letter-spacing:.16em; }
-.masthead h1 { margin:.35rem 0 0; font-size:clamp(2.1rem,4vw,4.4rem); letter-spacing:-.065em; line-height:.95; }
-.masthead h1 em { color:var(--amber); font-style:normal; font-weight:400; }
-.readonly { border:1px solid #49705f; padding:.55rem .75rem; }
-.metric-card { min-height:126px; background:linear-gradient(145deg,#1d221e,#151815); border:1px solid var(--line); border-top:2px solid var(--amber); padding:1rem 1.1rem; margin-bottom:1rem; box-shadow:0 18px 50px #0005; }
-.metric-card span,.metric-card small { display:block; color:#9ba397; font:500 .7rem Menlo,monospace; text-transform:uppercase; letter-spacing:.08em; }
-.metric-card strong { display:block; color:var(--paper); font:600 clamp(1.35rem,2vw,2rem) 'Avenir Next Condensed',sans-serif; margin:.55rem 0 .35rem; }
-.metric-sync_status { border-top-color:var(--mint); }
-h3 { font-family:Menlo,monospace !important; font-size:.86rem !important; text-transform:uppercase; letter-spacing:.1em; color:var(--amber) !important; }
-[data-testid='stDataFrame'],[data-testid='stVegaLiteChart'] { border:1px solid var(--line); background:#161a17; padding:.4rem; }
-[data-testid='stDownloadButton'] button { border:1px solid #665125; color:var(--amber); letter-spacing:.04em; }
-@media(max-width:700px){ .block-container{padding:1.2rem}.masthead{align-items:flex-start;gap:1rem}.readonly{display:none} }
+:root {
+  --ink:#0b100e; --ink-soft:#111915; --panel:#141c18; --panel-high:#1a241e;
+  --line:#2c3a32; --gold:#d9b36c; --gold-soft:#8e7445; --jade:#76d6ad;
+  --paper:#f0eee4; --muted:#929c94; --danger:#e69a71;
+}
+.stApp {
+  background:
+    radial-gradient(circle at 88% 0%, rgba(61,91,72,.42) 0, transparent 30rem),
+    linear-gradient(135deg, rgba(217,179,108,.035) 25%, transparent 25%) 0 0/28px 28px,
+    var(--ink);
+  color:var(--paper);
+  font-family:'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+}
+.block-container { max-width:1480px; padding:2.4rem 3.2rem 5rem; }
+[data-testid='stSidebar'] { background:linear-gradient(180deg,#111814,#0b100e); border-right:1px solid var(--line); }
+[data-testid='stSidebar'] [role='radiogroup'] { gap:.35rem; }
+[data-testid='stSidebar'] label { border-radius:3px; padding:.38rem .55rem; transition:background .2s ease; }
+[data-testid='stSidebar'] label:hover { background:rgba(217,179,108,.08); }
+.masthead { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:1px solid var(--line); padding:1rem 0 1.7rem; margin-bottom:1.8rem; animation:rise .55s ease both; }
+.eyebrow,.readonly { color:var(--jade); font:500 .72rem Menlo,'SFMono-Regular',monospace; letter-spacing:.16em; }
+.masthead h1 { margin:.48rem 0 .6rem; color:var(--paper); font:600 clamp(2.5rem,4.8vw,5.2rem)/.95 'Songti SC','STSong',serif; letter-spacing:-.08em; }
+.masthead h1 em { color:var(--gold); font-style:normal; font-weight:400; margin-left:.16em; }
+.masthead p { margin:0; color:var(--muted); font-size:.92rem; letter-spacing:.03em; }
+.readonly { border:1px solid #3d5e4d; background:#132019; padding:.62rem .82rem; white-space:nowrap; }
+.readonly i { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--jade); box-shadow:0 0 12px var(--jade); margin-right:.4rem; }
+.metric-card { min-height:132px; position:relative; overflow:hidden; background:linear-gradient(145deg,rgba(27,38,32,.96),rgba(15,21,18,.96)); border:1px solid var(--line); padding:1.08rem 1.2rem; margin-bottom:1rem; box-shadow:0 18px 48px rgba(0,0,0,.22); animation:rise .45s calc(var(--delay)) ease both; transition:transform .2s ease,border-color .2s ease; }
+.metric-card::before { content:''; position:absolute; left:0; top:0; width:2px; height:100%; background:var(--gold); }
+.metric-card:hover { transform:translateY(-3px); border-color:#56675c; }
+.metric-card span,.metric-card small { display:block; color:var(--muted); font-size:.72rem; letter-spacing:.08em; }
+.metric-card strong { display:block; color:var(--paper); font:600 clamp(1.4rem,2vw,2.1rem) 'Songti SC','STSong',serif; margin:.62rem 0 .38rem; letter-spacing:-.035em; }
+.metric-sync_status::before { background:var(--jade); }
+.metric-sync_status strong { color:var(--jade); font-family:'PingFang SC','Hiragino Sans GB',sans-serif; font-size:1.35rem; }
+.metric-sync_status.is-alert::before { background:var(--danger); }
+.metric-sync_status.is-alert strong { color:var(--danger); }
+.section-title { display:flex; align-items:center; gap:.85rem; margin:1.35rem 0 .72rem; }
+.section-title>span { color:var(--gold); font:500 .7rem Menlo,'SFMono-Regular',monospace; border:1px solid var(--gold-soft); min-width:2.15rem; height:2.15rem; display:grid; place-items:center; }
+.section-title h2 { color:var(--paper); font:500 1.02rem 'Songti SC','STSong',serif; margin:0; letter-spacing:.08em; }
+.section-title p { color:var(--muted); font-size:.7rem; margin:.16rem 0 0; }
+[data-testid='stDataFrame'],[data-testid='stVegaLiteChart'] { border:1px solid var(--line); background:rgba(17,25,21,.78); padding:.5rem; box-shadow:0 14px 38px rgba(0,0,0,.16); }
+[data-testid='stAlert'] { border-radius:2px; border-color:var(--line); }
+[data-testid='stDownloadButton'] button,[data-testid='stFormSubmitButton'] button { border:1px solid var(--gold-soft); color:var(--gold); background:#151b17; letter-spacing:.03em; transition:all .2s ease; }
+[data-testid='stDownloadButton'] button:hover,[data-testid='stFormSubmitButton'] button:hover { border-color:var(--gold); color:var(--paper); transform:translateY(-1px); }
+[data-baseweb='tab-list'] { border-bottom:1px solid var(--line); }
+textarea,input,[data-baseweb='select']>div { border-radius:2px !important; }
+@keyframes rise { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+@media(max-width:700px){
+  .block-container{padding:1.25rem 1rem 3rem}.masthead{align-items:flex-start;gap:1rem}.readonly{display:none}
+  .masthead h1{font-size:2.75rem}.masthead p{max-width:23rem}.section-title{margin-top:1rem}
+}
 </style>
 """
 
