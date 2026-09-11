@@ -6,7 +6,7 @@ import sys
 import pytest
 
 import asset_mcp.web.app as app_module
-from asset_mcp.web.app import load_home_model
+from asset_mcp.web.app import _STYLES, load_home_model
 
 
 @pytest.mark.asyncio
@@ -87,6 +87,14 @@ def test_render_exports_registers_csv_and_json_downloads():
     json_download = streamlit.downloads[1]
     assert json.loads(json_download["data"])["assets"][0]["symbol"] == "BTC"
     assert b"must-not-leak" not in json_download["data"]
+
+
+def test_dark_theme_keeps_configuration_text_editor_visible():
+    """输入墨金深色主题；输出文本区背景、文字、光标和选中态均有显式可读颜色。"""
+    assert "[data-testid='stTextArea'] textarea" in _STYLES
+    assert "-webkit-text-fill-color:var(--paper)" in _STYLES
+    assert "caret-color:var(--gold)" in _STYLES
+    assert "[data-testid='stTextArea'] textarea::selection" in _STYLES
 
 
 class _FakeService:

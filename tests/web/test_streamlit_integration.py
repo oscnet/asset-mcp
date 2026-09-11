@@ -61,6 +61,8 @@ def test_streamlit_configuration_page_saves_manual_assets_without_secrets(monkey
         "手工资产 YAML",
         "标签 YAML",
     ]
+    assert all(not area.disabled for area in app.text_area)
+    assert "manual:" in app.text_area[2].value
     app.text_area[2].set_value(
         """
 manual:
